@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Folio</string>
+    <string name="app_name">MyFiles</string>
     <string name="home_headline">Everything in its place.</string>
     <string name="home_subheadline">A clear view of the files on your phone.</string>
     <string name="internal_storage">Internal storage</string>
@@ -44,7 +44,7 @@
     <string name="sort_by_size">Sort by size</string>
     <string name="file_access_settings">File access</string>
     <string name="permission_headline">Your files.\nOnly yours.</string>
-    <string name="permission_body">Folio needs file access to show and organize shared storage on this phone.</string>
+    <string name="permission_body">MyFiles needs file access to show and organize shared storage on this phone.</string>
     <string name="privacy_offline">Works entirely on your device</string>
     <string name="privacy_control">No account, ads or cloud uploads</string>
     <string name="allow_file_access">Allow file access</string>

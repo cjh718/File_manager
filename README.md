@@ -1,6 +1,6 @@
-# Folio for Android
+# MyFiles for Android
 
-Folio is a native, offline file manager for shared phone storage. It is built with Kotlin, Android Views and Material 3, with light and dark themes.
+MyFiles is a native, offline file manager for shared phone storage. It is built with Kotlin, Android Views and Material 3, with light and dark themes.
 
 ## Included
 
@@ -17,10 +17,10 @@ Folio is a native, offline file manager for shared phone storage. It is built wi
 ## Requirements
 
 - Android 8.0 (API 26) or newer
-- Android 11+: enable **All files access** when Android opens Folio's permission settings
+- Android 11+: enable **All files access** when Android opens MyFiles's permission settings
 - Android 10 and earlier: allow the requested storage permission
 
-Folio only sees shared storage, not another app's private data. It has no account, ads, analytics or Internet permission. This prototype uses broad storage access because its core purpose is file management; Google Play distribution requires a separate all-files-access policy declaration.
+MyFiles only sees shared storage, not another app's private data. It has no account, ads, analytics or Internet permission. This prototype uses broad storage access because its core purpose is file management; Google Play distribution requires a separate all-files-access policy declaration.
 
 ## Build
 
