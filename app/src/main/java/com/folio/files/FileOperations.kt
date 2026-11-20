@@ -188,18 +188,23 @@ class FileOperations(private val primaryStorage: File) {
                 error = Error.SOURCE_OUTSIDE_PRIMARY
             }
 
-            val target = if (source != null && destination != null && source.name.isNotBlank()) {
-                canonical(File(destination, source.name))
+            val directTarget = if (source != null && destination != null && source.name.isNotBlank()) {
+                File(destination, source.name)
             } else {
                 null
             }
+            val target = directTarget?.let(::canonical)
             if (error == null && operation != Operation.DELETE && source != null) {
                 when {
+                    directTarget != null && Files.isSymbolicLink(directTarget.toPath()) ->
+                        error = Error.DESTINATION_EXISTS
                     target == null -> error = Error.INVALID_DESTINATION
+                    !isWithin(destination!!, target) || !isWithin(primary, target) ->
+                        error = Error.DESTINATION_OUTSIDE_PRIMARY
                     operation == Operation.MOVE && source.parentFile == destination ->
                         error = Error.SAME_LOCATION
-                    existsWithoutFollowingLinks(target) -> error = Error.DESTINATION_EXISTS
-                    source.isDirectory && isWithin(source, destination!!) ->
+                    existsWithoutFollowingLinks(directTarget!!) -> error = Error.DESTINATION_EXISTS
+                    source.isDirectory && isWithin(source, destination) ->
                         error = Error.RECURSIVE_OPERATION
                 }
             }

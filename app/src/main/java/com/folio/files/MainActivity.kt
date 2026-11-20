@@ -137,6 +137,9 @@ class MainActivity : AppCompatActivity() {
         })
 
         pendingImportUri = savedInstanceState?.getString(STATE_PENDING_IMPORT)?.let(Uri::parse)
+        pendingTransfer = savedInstanceState?.getStringArrayList(STATE_TRANSFER_PATHS)
+            ?.map(::File)
+            ?.let { PendingTransfer(it, savedInstanceState.getBoolean(STATE_TRANSFER_MOVE)) }
         if (pendingImportUri == null) captureIncomingIntent(intent)
         if (hasStorageAccess()) continueWithStorageAccess() else showPermission()
     }
@@ -150,6 +153,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_PENDING_IMPORT, pendingImportUri?.toString())
+        pendingTransfer?.let { transfer ->
+            outState.putStringArrayList(
+                STATE_TRANSFER_PATHS,
+                ArrayList(transfer.sources.map { it.absolutePath }),
+            )
+            outState.putBoolean(STATE_TRANSFER_MOVE, transfer.move)
+        }
         super.onSaveInstanceState(outState)
     }
 
@@ -157,6 +167,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::binding.isInitialized && binding.permissionScreen.root.isVisible && hasStorageAccess()) {
             continueWithStorageAccess()
+        } else if (::binding.isInitialized && binding.appContainer.isVisible && binding.homeScreen.root.isVisible) {
+            buildQuickAccess()
         }
     }
 
@@ -361,12 +373,19 @@ class MainActivity : AppCompatActivity() {
             when (val result = contentImporter.inspect(uri)) {
                 is ContentImporter.MetadataResult.Failure -> {
                     importInspectionJob = null
-                    if (pendingImportUri == uri) pendingImportUri = null
-                    showImportError(result.error)
+                    if (pendingImportUri == uri) {
+                        pendingImportUri = null
+                        showImportError(result.error)
+                    } else {
+                        consumePendingImport()
+                    }
                 }
                 is ContentImporter.MetadataResult.Success -> {
                     importInspectionJob = null
-                    if (pendingImportUri != uri) return@launch
+                    if (pendingImportUri != uri) {
+                        consumePendingImport()
+                        return@launch
+                    }
                     MaterialAlertDialogBuilder(this@MainActivity)
                         .setTitle(R.string.import_title)
                         .setMessage(getString(R.string.import_message, result.metadata.displayName))
@@ -385,7 +404,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun performImport(uri: Uri) {
         if (pendingImportUri != uri) return
-        pendingImportUri = null
         val progress = ProgressBar(this)
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.importing_file)
@@ -396,11 +414,13 @@ class MainActivity : AppCompatActivity() {
             when (val result = contentImporter.importFile(uri)) {
                 is ContentImporter.ImportResult.Success -> {
                     dialog.dismiss()
+                    if (pendingImportUri == uri) pendingImportUri = null
                     toast(getString(R.string.import_complete, result.destination.name))
                     openDirectory(result.destination.parentFile ?: contentImporter.destinationDirectory)
                 }
                 is ContentImporter.ImportResult.Failure -> {
                     dialog.dismiss()
+                    if (pendingImportUri == uri) pendingImportUri = null
                     showImportError(result.error)
                 }
             }
@@ -890,6 +910,27 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, getString(message, result.successCount), Toast.LENGTH_SHORT).show()
             return
         }
+        val partialItems = result.items.filter { it.isPartial }
+        if (partialItems.isNotEmpty()) {
+            val otherFailures = result.items.filterNot { it.isSuccess || it.isPartial }
+            val message = buildString {
+                append(getString(R.string.move_partial, partialItems.size))
+                append("\n\n")
+                append(partialItems.joinToString("\n") { "• ${it.source.name}" })
+                if (otherFailures.isNotEmpty()) {
+                    append("\n\n")
+                    append(getString(R.string.operation_partial, result.successCount, otherFailures.size))
+                    append("\n")
+                    append(otherFailures.joinToString("\n") { "• ${it.source.name}" })
+                }
+            }
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.operation_needs_attention)
+                .setMessage(message)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
         val failedNames = result.items.filterNot { it.isSuccess }
             .joinToString("\n") { "• ${it.source.name}" }
         MaterialAlertDialogBuilder(this)
@@ -1036,5 +1077,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val STATE_PENDING_IMPORT = "pending_import_uri"
+        const val STATE_TRANSFER_PATHS = "pending_transfer_paths"
+        const val STATE_TRANSFER_MOVE = "pending_transfer_move"
     }
 }

@@ -12,6 +12,9 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -276,25 +279,18 @@ class ContentImporter(context: Context) {
 
             // A direct child of the fixed canonical directory cannot escape through traversal.
             val candidate = File(directory, candidateName)
-            val reserved = try {
-                candidate.createNewFile()
+            if (Files.exists(candidate.toPath(), LinkOption.NOFOLLOW_LINKS)) continue
+            try {
+                // Files.move has no REPLACE_EXISTING option here: an existing entry is never replaced.
+                Files.move(staging.toPath(), candidate.toPath())
+                return candidate
+            } catch (_: FileAlreadyExistsException) {
+                continue
             } catch (denied: SecurityException) {
                 throw denied
             } catch (error: IOException) {
+                if (Files.exists(candidate.toPath(), LinkOption.NOFOLLOW_LINKS)) continue
                 throw ImportFailure(ImportError.COPY_FAILED, error)
-            }
-            if (!reserved) continue
-
-            var published = false
-            try {
-                // renameTo replaces only the empty target atomically reserved by this call.
-                if (!staging.renameTo(candidate)) {
-                    throw ImportFailure(ImportError.COPY_FAILED)
-                }
-                published = true
-                return candidate
-            } finally {
-                if (!published) deleteQuietly(candidate)
             }
         }
         throw ImportFailure(ImportError.NAME_COLLISIONS_EXHAUSTED)

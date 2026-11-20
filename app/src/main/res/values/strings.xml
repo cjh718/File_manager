@@ -100,6 +100,8 @@
     <string name="move_complete">Moved %1$d item(s).</string>
     <string name="delete_complete">Deleted %1$d item(s).</string>
     <string name="operation_partial">Completed: %1$d. Failed: %2$d. Check the affected files and try again.</string>
+    <string name="operation_needs_attention">Move needs attention</string>
+    <string name="move_partial">%1$d item(s) were copied completely, but their originals could not be fully deleted. Do not retry those copies; remove the remaining originals manually.</string>
     <string name="operation_invalid">The selected files or destination are not valid for this operation.</string>
     <string name="share_files">Share files</string>
     <string name="share_folders_unsupported">Folders cannot be shared. Select files only.</string>

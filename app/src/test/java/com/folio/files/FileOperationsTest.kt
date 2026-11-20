@@ -171,6 +171,25 @@ class FileOperationsTest {
     }
 
     @Test
+    fun rejectsSymbolicLinkDestinationWithoutWritingTarget() {
+        val source = File(primary, "escape.txt").apply { writeText("safe") }
+        val outsideTarget = File(temporaryDirectory, "outside-target.txt")
+        val destinationLink = File(destination, source.name)
+        try {
+            Files.createSymbolicLink(destinationLink.toPath(), outsideTarget.toPath())
+        } catch (e: Exception) {
+            assumeNoException(e)
+        }
+
+        val result = operations.copy(source, destination)
+
+        assertEquals(FileOperations.Error.DESTINATION_EXISTS, result.error)
+        assertFalse(outsideTarget.exists())
+        assertTrue(Files.isSymbolicLink(destinationLink.toPath()))
+        assertEquals("safe", source.readText())
+    }
+
+    @Test
     fun failedItemDoesNotPreventLaterIndependentCopy() {
         val target = File(temporaryDirectory, "target.txt").apply { writeText("target") }
         val badFolder = File(primary, "bad").apply { assertTrue(mkdir()) }
