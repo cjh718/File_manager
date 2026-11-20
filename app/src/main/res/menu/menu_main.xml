@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:id="@+id/sort_group">
+        <item
+            android:id="@+id/action_sort_name"
+            android:title="@string/sort_by_name" />
+        <item
+            android:id="@+id/action_sort_modified"
+            android:title="@string/sort_by_modified" />
+        <item
+            android:id="@+id/action_sort_size"
+            android:title="@string/sort_by_size" />
+    </group>
+    <item
+        android:id="@+id/action_storage_settings"
+        android:title="@string/file_access_settings" />
+</menu>

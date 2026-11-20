@@ -19,3 +19,11 @@ openkbs.local.json
 .agents/*
 !.agents/skills/
 !.agents/skills-off/
+
+# Android and Gradle build output
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+.cxx/

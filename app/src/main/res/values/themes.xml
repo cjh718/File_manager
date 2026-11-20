@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Folio" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/text</item>
+        <item name="colorOnSurfaceVariant">@color/muted_text</item>
+        <item name="android:colorBackground">@color/background</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="fontFamily">@font/manrope</item>
+        <item name="android:statusBarColor">@color/background</item>
+        <item name="android:navigationBarColor">#111614</item>
+        <item name="android:windowLightStatusBar">@bool/light_status_bar</item>
+    </style>
+
+    <style name="TextAppearance.Folio.Headline" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">29sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <style name="TextAppearance.Folio.PermissionHeadline" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">36sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Folio.SectionTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Folio.Toolbar" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textSize">21sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+</resources>

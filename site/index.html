@@ -1,96 +1,148 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenKBS Project</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f6f1">
+    <meta name="description" content="Folio is a private, offline file manager for Android shared storage.">
+    <title>Folio — Your files, in order</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        @font-face { font-family: Manrope; src: url('/manrope.ttf') format('truetype'); font-weight: 200 800; font-display: swap; }
+        :root { --ink:#18201d; --muted:#65706a; --paper:#f4f6f1; --surface:#fff; --blue:#2457c5; --navy:#193d88; --line:#dce2dc; }
+        * { box-sizing:border-box; }
+        body { margin:0; font-family:Manrope,sans-serif; color:var(--ink); background:var(--paper); }
+        a { color:inherit; }
+        .wrap { width:min(1120px,calc(100% - 40px)); margin:auto; }
+        header { height:88px; display:flex; align-items:center; justify-content:space-between; }
+        .brand { display:flex; align-items:center; gap:11px; font-size:22px; font-weight:800; text-decoration:none; }
+        .mark { width:38px; height:38px; display:grid; place-items:center; color:white; background:var(--blue); border-radius:12px; }
+        .mark svg { width:21px; }
+        .version { font-size:12px; font-weight:700; color:var(--muted); border:1px solid var(--line); padding:8px 12px; border-radius:99px; }
+        .hero { display:grid; grid-template-columns:1.08fr .92fr; gap:60px; align-items:center; min-height:650px; padding:48px 0 74px; }
+        .eyebrow { display:flex; align-items:center; gap:9px; color:var(--blue); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+        .eyebrow:before { content:""; width:24px; height:2px; background:var(--blue); }
+        h1 { font-size:clamp(45px,6vw,76px); line-height:1.03; letter-spacing:-.055em; margin:24px 0; max-width:660px; }
+        .lead { font-size:18px; line-height:1.75; color:var(--muted); max-width:530px; margin:0 0 30px; }
+        .actions { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+        .download { display:inline-flex; align-items:center; gap:12px; min-height:58px; padding:0 24px; background:var(--blue); color:#fff; text-decoration:none; font-weight:800; border-radius:16px; box-shadow:0 12px 28px #2457c52b; }
+        .download:hover { background:#1949ad; }
+        .download svg { width:22px; }
+        .meta { font-size:12px; line-height:1.6; color:var(--muted); }
+        .privacy { display:flex; gap:10px; align-items:flex-start; margin-top:28px; color:var(--muted); font-size:13px; line-height:1.6; }
+        .privacy svg { flex:0 0 19px; width:19px; color:var(--blue); }
+        .phone-stage { position:relative; display:grid; place-items:center; min-height:570px; }
+        .phone-stage:before { content:""; position:absolute; width:430px; height:430px; border-radius:50%; background:#e2e9f9; }
+        .phone { position:relative; width:286px; height:574px; padding:12px; border:2px solid #26332e; border-radius:42px; background:#26332e; box-shadow:0 32px 70px #283f342b; transform:rotate(3deg); }
+        .screen { height:100%; overflow:hidden; border-radius:31px; background:#f6f7f3; padding:22px 16px; }
+        .status { display:flex; justify-content:space-between; font-size:8px; font-weight:800; padding:0 4px 18px; }
+        .app-title { font-size:20px; font-weight:800; margin-bottom:20px; }
+        .screen h2 { font-size:24px; line-height:1.18; letter-spacing:-.04em; margin:0 0 16px; }
+        .storage { background:var(--navy); color:white; border-radius:20px; padding:18px; }
+        .storage-label { display:flex; justify-content:space-between; font-size:9px; color:#c8d5f3; }
+        .storage strong { display:block; font-size:16px; margin:18px 0 12px; }
+        .bar { height:4px; border-radius:4px; background:#ffffff42; overflow:hidden; }
+        .bar span { display:block; width:64%; height:100%; background:white; }
+        .browse { display:inline-block; border:1px solid #ffffff77; border-radius:9px; padding:8px 10px; margin-top:15px; font-size:9px; font-weight:700; }
+        .section { font-size:12px; font-weight:800; margin:20px 3px 10px; }
+        .categories { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .category { display:flex; gap:8px; align-items:center; background:white; border-radius:12px; padding:11px 9px; font-size:9px; font-weight:700; }
+        .folder-icon { display:grid; place-items:center; width:27px; height:27px; border-radius:8px; color:var(--blue); background:#e6ecfc; }
+        .folder-icon svg { width:15px; }
+        .recent { display:flex; align-items:center; gap:10px; padding:11px 2px; }
+        .recent div:last-child { flex:1; }
+        .recent strong { display:block; font-size:9px; }
+        .recent small { display:block; font-size:8px; color:var(--muted); margin-top:4px; }
+        .details { border-top:1px solid var(--line); padding:56px 0; display:grid; grid-template-columns:1fr 1fr 1fr; gap:42px; }
+        .step-number { color:var(--blue); font-size:12px; font-weight:800; }
+        .details h3 { font-size:18px; margin:12px 0 10px; }
+        .details p { color:var(--muted); font-size:14px; line-height:1.7; margin:0; }
+        .note { background:#eaf0e9; border-radius:18px; padding:20px 24px; color:#45534b; font-size:13px; line-height:1.7; margin-bottom:50px; }
+        footer { display:flex; justify-content:space-between; gap:20px; padding:24px 0 34px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+        @media (max-width:800px) {
+            .hero { grid-template-columns:1fr; gap:12px; padding-top:42px; }
+            .phone-stage { min-height:540px; margin-top:25px; }
+            .phone-stage:before { width:350px; height:350px; }
+            .phone { transform:rotate(1deg) scale(.9); }
+            .details { grid-template-columns:1fr; gap:30px; }
+            .hero { min-height:auto; }
         }
-        .container {
-            background: white;
-            padding: 3rem;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
-            max-width: 500px;
-        }
-        h1 { color: #333; margin-bottom: 1rem; }
-        p { color: #666; margin-bottom: 2rem; line-height: 1.6; }
-        .btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        @media (max-width:480px) {
+            .wrap { width:min(100% - 28px,1120px); }
+            header { height:72px; }
+            h1 { font-size:45px; }
+            .lead { font-size:16px; }
+            .download { width:100%; justify-content:center; }
+            .actions { gap:12px; }
+            .phone-stage { margin-left:-12px; margin-right:-12px; }
+            footer { flex-direction:column; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>OpenKBS Project</h1>
-        <p>Your project is ready. Start building — ask the chat for anything and watch it appear here.</p>
-        <a href="#" class="btn" onclick="testAPI()">Test API</a>
-        <pre id="result" style="margin-top: 2rem; text-align: left; background: #f5f5f5; padding: 1rem; border-radius: 8px; display: none;"></pre>
+    <div class="wrap">
+        <header>
+            <a class="brand" href="/" aria-label="Folio home">
+                <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg></span>
+                Folio
+            </a>
+            <span class="version">ANDROID 8.0+</span>
+        </header>
+
+        <main>
+            <section class="hero">
+                <div>
+                    <div class="eyebrow">Native Android file manager</div>
+                    <h1>Your phone,<br>beautifully organized.</h1>
+                    <p class="lead">Browse, search, share and organize your phone’s shared storage in a calm, simple app. Everything stays on your device.</p>
+                    <div class="actions">
+                        <a class="download" href="/media/folio/Folio.apk" download>
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7zm-14 9v2h14v-2z"/></svg>
+                            Download Folio
+                        </a>
+                        <div class="meta">Version 1.0 · APK<br>Free · No ads</div>
+                    </div>
+                    <div class="privacy">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 1-9 4v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9z"/></svg>
+                        <span><strong>Private by design.</strong> No account, analytics, cloud uploads or Internet permission.</span>
+                    </div>
+                </div>
+
+                <div class="phone-stage" aria-label="Preview of the Folio Android app">
+                    <div class="phone">
+                        <div class="screen">
+                            <div class="status"><span>9:41</span><span>● ● ●</span></div>
+                            <div class="app-title">Folio</div>
+                            <h2>Everything<br>in its place.</h2>
+                            <div class="storage">
+                                <div class="storage-label"><span>Internal storage</span><span>46.2 GB free</span></div>
+                                <strong>81.8 GB used of 128 GB</strong>
+                                <div class="bar"><span></span></div>
+                                <div class="browse">Browse all files</div>
+                            </div>
+                            <div class="section">Quick access</div>
+                            <div class="categories">
+                                <div class="category"><span class="folder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg></span>Downloads</div>
+                                <div class="category"><span class="folder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg></span>Images</div>
+                                <div class="category"><span class="folder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg></span>Videos</div>
+                                <div class="category"><span class="folder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg></span>Audio</div>
+                            </div>
+                            <div class="section">Recent files</div>
+                            <div class="recent"><span class="folder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9z"/></svg></span><div><strong>Travel notes.pdf</strong><small>2.4 MB · Today</small></div></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="details" aria-label="Installation steps">
+                <div><span class="step-number">01 / DOWNLOAD</span><h3>Open this page on your phone</h3><p>Tap Download Folio. Open the APK when the download finishes.</p></div>
+                <div><span class="step-number">02 / INSTALL</span><h3>Allow this prototype install</h3><p>If Android asks, allow your browser to install apps, then confirm the Folio installation.</p></div>
+                <div><span class="step-number">03 / ORGANIZE</span><h3>Choose your file access</h3><p>On Android 11+, enable All files access in the system settings to browse shared storage.</p></div>
+            </section>
+
+            <div class="note"><strong>A note about permissions:</strong> Folio’s core purpose is managing files, so it requests broad shared-storage access. It cannot read other apps’ private data. This is a sideloaded prototype, not a Play Store release; only install it if you trust this build.</div>
+        </main>
+
+        <footer><span>Folio · Files, without the fuss.</span><span>Kotlin · Material 3 · Light &amp; dark</span></footer>
     </div>
-    <script>
-        // The preview URL (p-*.…) serves static files only — the API lives on
-        // the production URL. Right after project creation the production
-        // environment needs a minute or two, so instead of surfacing a JSON
-        // parse error we explain and retry.
-        const IS_PREVIEW = /^p-[a-z0-9]+\./.test(location.hostname) || location.port === '6100';
-        let retryTimer = null;
-
-        async function testAPI() {
-            const result = document.getElementById('result');
-            result.style.display = 'block';
-            clearTimeout(retryTimer);
-
-            if (IS_PREVIEW) {
-                result.textContent = '⏳ This is the preview URL — it serves your site\'s static files only.\n' +
-                    'The API runs on your production URL, which is set up automatically\n' +
-                    'right after project creation (usually ready within 1–2 minutes).';
-                return;
-            }
-
-            result.textContent = 'Loading...';
-            try {
-                const response = await fetch('/api', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'hello', data: { test: true } })
-                });
-                const text = await response.text();
-                let data;
-                try {
-                    data = JSON.parse(text);
-                } catch {
-                    // Got HTML back — the /api route isn't wired yet (production
-                    // environment still being set up). Retry until it is.
-                    result.textContent = '⏳ Setting up production environment… retrying automatically.';
-                    retryTimer = setTimeout(testAPI, 10000);
-                    return;
-                }
-                result.textContent = JSON.stringify(data, null, 2);
-            } catch (e) {
-                result.textContent = '⏳ API not reachable yet (' + e.message + ') — retrying automatically.';
-                retryTimer = setTimeout(testAPI, 10000);
-            }
-        }
-    </script>
 </body>
 </html>
