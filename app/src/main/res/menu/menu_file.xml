@@ -4,11 +4,23 @@
         android:id="@+id/action_open"
         android:title="@string/open" />
     <item
+        android:id="@+id/action_open_with"
+        android:title="@string/open_with" />
+    <item
         android:id="@+id/action_share"
         android:title="@string/share" />
     <item
+        android:id="@+id/action_copy"
+        android:title="@string/copy" />
+    <item
+        android:id="@+id/action_move"
+        android:title="@string/move" />
+    <item
         android:id="@+id/action_rename"
         android:title="@string/rename" />
+    <item
+        android:id="@+id/action_add_quick_access"
+        android:title="@string/add_to_quick_access" />
     <item
         android:id="@+id/action_details"
         android:title="@string/details" />

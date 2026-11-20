@@ -114,13 +114,28 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
             android:layout_marginTop="28dp"
-            android:text="@string/quick_access"
-            android:textAppearance="@style/TextAppearance.Folio.SectionTitle" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/quick_access"
+                android:textAppearance="@style/TextAppearance.Folio.SectionTitle" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/customize_quick_access"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/customize" />
+        </LinearLayout>
 
         <GridLayout
             android:id="@+id/quick_access_grid"
@@ -129,6 +144,59 @@
             android:layout_marginTop="10dp"
             android:columnCount="2"
             android:orientation="horizontal" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="24dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/dual_app_downloads"
+                android:textAppearance="@style/TextAppearance.Folio.SectionTitle" />
+
+            <TextView
+                android:id="@+id/dual_app_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/dual_app_unavailable"
+                android:textColor="@color/muted_text"
+                android:textSize="13sp" />
+
+            <GridLayout
+                android:id="@+id/dual_app_grid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:columnCount="2"
+                android:orientation="horizontal" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/import_file_button"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/import_file" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dual_app_help_button"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/dual_app_details" />
+            </LinearLayout>
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"

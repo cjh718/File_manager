@@ -11,6 +11,23 @@
             android:id="@+id/action_sort_size"
             android:title="@string/sort_by_size" />
     </group>
+    <group android:id="@+id/selection_group">
+        <item
+            android:id="@+id/action_select_all"
+            android:title="@string/select_all" />
+        <item
+            android:id="@+id/action_selection_share"
+            android:title="@string/share" />
+        <item
+            android:id="@+id/action_selection_copy"
+            android:title="@string/copy" />
+        <item
+            android:id="@+id/action_selection_move"
+            android:title="@string/move" />
+        <item
+            android:id="@+id/action_selection_delete"
+            android:title="@string/delete" />
+    </group>
     <item
         android:id="@+id/action_storage_settings"
         android:title="@string/file_access_settings" />

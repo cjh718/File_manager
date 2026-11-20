@@ -1,33 +1,51 @@
 # MyFiles for Android
 
-MyFiles is a native, offline file manager for shared phone storage. It is built with Kotlin, Android Views and Material 3, with light and dark themes.
+MyFiles is a native, offline file manager for shared phone storage. It is built with Kotlin, Android Views and Material 3, with light and dark themes and bundled Roboto typography.
 
 ## Included
 
 - Internal-storage usage overview
-- Shortcuts to Downloads, DCIM, Movies, Music, Documents and Recordings
+- Customizable Quick Access shortcuts with add, remove, reorder and reset controls
+- Shortcuts to Downloads, DCIM, Movies, Music, Documents and Recordings by default
 - Recent shared files from MediaStore
 - Folder browsing with folders-first sorting
-- Search within the current folder
-- Name, modification-date and size sorting
-- Open and share actions using Android's app chooser
+- Search within the current folder and name/date/size sorting
+- Long-press multi-select with batch Share, Copy, Move and confirmed Delete
+- Single-item and batch Copy/Move with a primary-storage destination picker
+- Open using Android’s default-app flow, or choose an app explicitly with Open with
+- Single and multiple file sharing using read-only FileProvider grants
+- Shared-profile Downloads discovery on supported Android 13+ devices
+- User-confirmed content-URI imports into `Download/MyFiles imports`
 - New-folder creation, rename, details and confirmed deletion
-- FileProvider-based access for other apps without exposing file paths
 
 ## Requirements
 
 - Android 8.0 (API 26) or newer
-- Android 11+: enable **All files access** when Android opens MyFiles's permission settings
+- Android 11+: enable **All files access** when Android opens the MyFiles permission settings
 - Android 10 and earlier: allow the requested storage permission
 
-MyFiles only sees shared storage, not another app's private data. It has no account, ads, analytics or Internet permission. This prototype uses broad storage access because its core purpose is file management; Google Play distribution requires a separate all-files-access policy declaration.
+MyFiles only sees shared storage exposed to it by Android, not another app’s private data. It has no account, ads, analytics or Internet permission. This prototype uses broad storage access because its core purpose is file management; Google Play distribution requires a separate all-files-access policy declaration.
+
+## Dual apps and shared profiles
+
+On Android 13/API 33 and newer, MyFiles uses `StorageManager.getStorageVolumesIncludingSharedProfiles()` to look for readable Downloads folders shared by another profile. Any such folders appear separately under **Dual app Downloads** and are treated as read-only: files can be opened, shared or copied into primary storage, but cannot be renamed, moved or deleted from the shared profile.
+
+Clone behavior varies by phone manufacturer. Android does not expose every cloned app’s storage, and All files access does not unlock another profile’s isolated storage, Chrome’s private data or `Android/data`. If no shared Downloads folder appears, try cloned Chrome’s **Open with → MyFiles** or **Share → MyFiles** action. MyFiles asks for confirmation and imports a copy when the source app supplies a readable `content://` grant. If the phone does not permit that transfer, direct access is unsupported rather than something another permission can fix.
+
+## File operations
+
+Copy and Move destinations are confined to primary storage. Existing destination names are never overwritten, and folders cannot be copied or moved into themselves. Moves copy first and delete the source only after a successful copy when a direct rename is unavailable. Batch operations report partial failures. Share accepts files only; directories cannot be attached as recursive shares.
+
+Normal **Open** launches Android’s `ACTION_VIEW` flow directly so an existing default viewer is honored. Android may offer **Just once/Always** when no default exists. **Open with** deliberately displays the chooser. The exact default-app controls and how defaults are cleared are controlled by Android or the phone manufacturer.
+
+Quick Access customization is stored locally in SharedPreferences. Removing a shortcut never deletes its folder. Custom entries are confined to primary storage, and Reset restores the original six shortcuts.
 
 ## Build
 
 Install JDK 17 and Android SDK 35, then run:
 
 ```bash
-./gradlew assembleDebug
+./gradlew testDebugUnitTest assembleDebug lintDebug
 ```
 
 The installable debug APK is generated at:
@@ -40,6 +58,6 @@ Install it with `adb install app-debug.apk`, or copy it to a phone and open it. 
 
 ## Notes
 
-The Recent list comes from Android's MediaStore and shows up to six readable shared files. Quick-access folders depend on the manufacturer's folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
+The Recent list comes from Android’s MediaStore and shows up to six readable primary-storage files. Quick-access folders depend on the manufacturer’s folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
 
-The bundled Manrope font is licensed under the SIL Open Font License; its license is included in `app/src/main/assets/OFL-Manrope.txt`.
+The bundled Roboto font is licensed under the SIL Open Font License; its license is included in `app/src/main/assets/OFL-Roboto.txt`.

@@ -12,4 +12,5 @@
     <color name="file_icon_background">#29322E</color>
     <color name="privacy_background">#202C26</color>
     <color name="search_stroke">#3C4842</color>
+    <color name="selected_item_background">#26365C</color>
 </resources>

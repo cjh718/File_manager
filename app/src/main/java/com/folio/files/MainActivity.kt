@@ -2,10 +2,12 @@ package com.folio.files
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -17,6 +19,7 @@ import android.text.format.Formatter
 import android.view.View
 import android.widget.GridLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,38 +47,70 @@ class MainActivity : AppCompatActivity() {
     private enum class Screen { HOME, BROWSER }
     private enum class SortMode { NAME, MODIFIED, SIZE }
 
-    private data class QuickLocation(
-        val title: Int,
-        val subtitle: Int,
-        val folder: String,
-        val icon: Int,
-    )
+    private data class PendingTransfer(val sources: List<File>, val move: Boolean)
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var fileAdapter: FileAdapter
     private lateinit var recentAdapter: FileAdapter
+    private val quickAccessStore by lazy { QuickAccessStore(this, storageRoot) }
+    private val fileOperations by lazy { FileOperations(storageRoot) }
+    private val contentImporter by lazy { ContentImporter(this) }
+    private var pendingImportUri: Uri? = null
+    private var importInspectionJob: Job? = null
 
     private val storageRoot: File by lazy { Environment.getExternalStorageDirectory() }
+    private var primaryRoot = StorageRoot("primary", storageRoot, "Internal storage", false, true)
+    private var currentRoot = primaryRoot
+    private var availableRoots = listOf(primaryRoot)
     private var currentDirectory: File = storageRoot
     private var screen = Screen.HOME
     private var sortMode = SortMode.NAME
     private var allItems = emptyList<FileItem>()
     private var loadJob: Job? = null
+    private var rootDiscoveryJob: Job? = null
+    private var selectionMode = false
+    private val selectedPaths = linkedSetOf<String>()
+    private var pendingTransfer: PendingTransfer? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
-        if (hasStorageAccess()) showHome() else showPermission()
+        if (hasStorageAccess()) continueWithStorageAccess() else showPermission()
     }
 
     private val settingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
         if (hasStorageAccess()) {
-            showHome()
+            continueWithStorageAccess()
         } else {
             showPermission()
             toast(R.string.permission_needed)
+        }
+    }
+
+    private val openDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) {
+                // The temporary activity grant still allows the immediate, confirmed import.
+            }
+            pendingImportUri = uri
+            if (hasStorageAccess()) consumePendingImport() else showPermission()
+        }
+    }
+
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val path = result.data?.getStringExtra(FolderPickerActivity.EXTRA_DIRECTORY)
+        val transfer = pendingTransfer
+        pendingTransfer = null
+        if (result.resultCode == RESULT_OK && path != null && transfer != null) {
+            executeTransfer(transfer, File(path))
         }
     }
 
@@ -91,8 +126,9 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
-                    screen == Screen.BROWSER && currentDirectory != storageRoot -> {
-                        openDirectory(currentDirectory.parentFile ?: storageRoot)
+                    selectionMode -> clearSelection()
+                    screen == Screen.BROWSER && currentDirectory != currentRoot.directory -> {
+                        openDirectory(currentDirectory.parentFile ?: currentRoot.directory)
                     }
                     screen == Screen.BROWSER -> showHome()
                     else -> finish()
@@ -100,19 +136,50 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        if (hasStorageAccess()) showHome() else showPermission()
+        pendingImportUri = savedInstanceState?.getString(STATE_PENDING_IMPORT)?.let(Uri::parse)
+        if (pendingImportUri == null) captureIncomingIntent(intent)
+        if (hasStorageAccess()) continueWithStorageAccess() else showPermission()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureIncomingIntent(intent)
+        if (hasStorageAccess()) consumePendingImport() else showPermission()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_PENDING_IMPORT, pendingImportUri?.toString())
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
         super.onResume()
         if (::binding.isInitialized && binding.permissionScreen.root.isVisible && hasStorageAccess()) {
-            showHome()
+            continueWithStorageAccess()
         }
     }
 
+    private fun continueWithStorageAccess() {
+        showHome()
+        consumePendingImport()
+    }
+
     private fun setupLists() {
-        fileAdapter = FileAdapter(::openItem, ::showFileActions)
-        recentAdapter = FileAdapter(::openItem, ::showFileActions)
+        fileAdapter = FileAdapter(
+            ::handleItemClick,
+            ::showFileActions,
+            onLongClick = { item -> startSelection(item); true },
+            isSelected = { selectedPaths.contains(selectionKey(it.file)) },
+            isSelectionMode = { selectionMode },
+        )
+        recentAdapter = FileAdapter(
+            ::handleItemClick,
+            ::showFileActions,
+            onLongClick = { item -> startSelection(item); true },
+            isSelected = { selectedPaths.contains(selectionKey(it.file)) },
+            isSelectionMode = { selectionMode },
+        )
 
         binding.browserScreen.fileList.apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
@@ -129,17 +196,56 @@ class MainActivity : AppCompatActivity() {
     private fun setupActions() {
         binding.permissionScreen.allowAccessButton.setOnClickListener { requestStorageAccess() }
         binding.homeScreen.browseAllButton.setOnClickListener { openDirectory(storageRoot) }
+        binding.homeScreen.customizeQuickAccess.setOnClickListener {
+            startActivity(Intent(this, QuickAccessActivity::class.java))
+        }
+        binding.homeScreen.importFileButton.setOnClickListener {
+            openDocumentLauncher.launch(arrayOf("*/*"))
+        }
+        binding.homeScreen.dualAppHelpButton.setOnClickListener {
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.dual_app_help_title)
+                .setMessage(R.string.dual_app_help_body)
+                .setPositiveButton(R.string.got_it, null)
+                .show()
+        }
         binding.browserScreen.newFolderButton.setOnClickListener { showNewFolderDialog() }
-        binding.browserScreen.searchInput.doAfterTextChanged { applyFilter() }
+        binding.browserScreen.searchInput.doAfterTextChanged {
+            if (selectionMode) clearSelection()
+            applyFilter()
+        }
         binding.toolbar.setNavigationOnClickListener {
-            if (currentDirectory == storageRoot) showHome()
-            else openDirectory(currentDirectory.parentFile ?: storageRoot)
+            when {
+                selectionMode -> clearSelection()
+                currentDirectory == currentRoot.directory -> showHome()
+                else -> openDirectory(currentDirectory.parentFile ?: currentRoot.directory)
+            }
         }
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_sort_name -> setSortMode(SortMode.NAME)
                 R.id.action_sort_modified -> setSortMode(SortMode.MODIFIED)
                 R.id.action_sort_size -> setSortMode(SortMode.SIZE)
+                R.id.action_select_all -> {
+                    selectAllVisible()
+                    true
+                }
+                R.id.action_selection_share -> {
+                    shareFiles(selectedItems().map { it.file })
+                    true
+                }
+                R.id.action_selection_copy -> {
+                    beginTransfer(selectedItems(), move = false)
+                    true
+                }
+                R.id.action_selection_move -> {
+                    beginTransfer(selectedItems(), move = true)
+                    true
+                }
+                R.id.action_selection_delete -> {
+                    confirmDelete(selectedItems())
+                    true
+                }
                 R.id.action_storage_settings -> {
                     requestStorageAccess()
                     true
@@ -150,22 +256,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildQuickAccess() {
-        val locations = listOf(
-            QuickLocation(R.string.downloads, R.string.downloads_hint, Environment.DIRECTORY_DOWNLOADS, R.drawable.ic_download),
-            QuickLocation(R.string.images, R.string.images_hint, Environment.DIRECTORY_DCIM, R.drawable.ic_image),
-            QuickLocation(R.string.videos, R.string.videos_hint, Environment.DIRECTORY_MOVIES, R.drawable.ic_video),
-            QuickLocation(R.string.audio, R.string.audio_hint, Environment.DIRECTORY_MUSIC, R.drawable.ic_audio),
-            QuickLocation(R.string.documents, R.string.documents_hint, Environment.DIRECTORY_DOCUMENTS, R.drawable.ic_document),
-            QuickLocation(R.string.recordings, R.string.recordings_hint, "Recordings", R.drawable.ic_mic),
-        )
         val grid = binding.homeScreen.quickAccessGrid
-        locations.forEachIndexed { index, location ->
+        grid.removeAllViews()
+        quickAccessStore.load().forEachIndexed { index, entry ->
             val card = ViewCategoryBinding.inflate(layoutInflater, grid, false)
-            card.categoryTitle.setText(location.title)
-            card.categorySubtitle.setText(location.subtitle)
-            card.categoryIcon.setImageResource(location.icon)
+            card.categoryTitle.text = entry.displayTitle(this)
+            card.categorySubtitle.text = entry.displaySubtitle(this)
+            card.categoryIcon.setImageResource(entry.iconRes)
             card.root.setOnClickListener {
-                openDirectory(File(storageRoot, location.folder))
+                val directory = quickAccessStore.resolve(entry)
+                if (directory == null || !directory.isDirectory) {
+                    toast(R.string.quick_access_missing)
+                } else {
+                    openDirectory(directory)
+                }
             }
             val margin = dp(5)
             card.root.layoutParams = GridLayout.LayoutParams().apply {
@@ -176,6 +280,16 @@ class MainActivity : AppCompatActivity() {
                 if (index < 2) topMargin = 0
             }
             grid.addView(card.root)
+        }
+    }
+
+    private fun addFolderToQuickAccess(directory: File) {
+        try {
+            quickAccessStore.add(directory)
+            toast(R.string.shortcut_added)
+            buildQuickAccess()
+        } catch (_: IllegalArgumentException) {
+            toast(R.string.shortcut_already_exists)
         }
     }
 
@@ -216,6 +330,95 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun captureIncomingIntent(source: Intent?) {
+        val action = source?.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_VIEW) return
+        @Suppress("DEPRECATION")
+        val uri = if (action == Intent.ACTION_SEND) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                source.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                source.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+        } else {
+            source.data
+        }
+        if (uri?.scheme == ContentResolver.SCHEME_CONTENT) {
+            pendingImportUri = uri
+            // Do not offer the same external intent again after cancellation or recreation.
+            setIntent(Intent(Intent.ACTION_MAIN))
+        }
+    }
+
+    private fun consumePendingImport() {
+        val uri = pendingImportUri ?: return
+        if (!hasStorageAccess()) {
+            showPermission()
+            return
+        }
+        if (importInspectionJob?.isActive == true) return
+        importInspectionJob = lifecycleScope.launch {
+            when (val result = contentImporter.inspect(uri)) {
+                is ContentImporter.MetadataResult.Failure -> {
+                    importInspectionJob = null
+                    if (pendingImportUri == uri) pendingImportUri = null
+                    showImportError(result.error)
+                }
+                is ContentImporter.MetadataResult.Success -> {
+                    importInspectionJob = null
+                    if (pendingImportUri != uri) return@launch
+                    MaterialAlertDialogBuilder(this@MainActivity)
+                        .setTitle(R.string.import_title)
+                        .setMessage(getString(R.string.import_message, result.metadata.displayName))
+                        .setNegativeButton(android.R.string.cancel) { _, _ ->
+                            if (pendingImportUri == uri) pendingImportUri = null
+                        }
+                        .setPositiveButton(R.string.import_file) { _, _ -> performImport(uri) }
+                        .setOnCancelListener {
+                            if (pendingImportUri == uri) pendingImportUri = null
+                        }
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun performImport(uri: Uri) {
+        if (pendingImportUri != uri) return
+        pendingImportUri = null
+        val progress = ProgressBar(this)
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.importing_file)
+            .setView(progress)
+            .setCancelable(false)
+            .show()
+        lifecycleScope.launch {
+            when (val result = contentImporter.importFile(uri)) {
+                is ContentImporter.ImportResult.Success -> {
+                    dialog.dismiss()
+                    toast(getString(R.string.import_complete, result.destination.name))
+                    openDirectory(result.destination.parentFile ?: contentImporter.destinationDirectory)
+                }
+                is ContentImporter.ImportResult.Failure -> {
+                    dialog.dismiss()
+                    showImportError(result.error)
+                }
+            }
+        }
+    }
+
+    private fun showImportError(error: ContentImporter.ImportError) {
+        val message = when (error) {
+            ContentImporter.ImportError.PERMISSION_DENIED -> R.string.import_permission_denied
+            ContentImporter.ImportError.SOURCE_UNAVAILABLE,
+            ContentImporter.ImportError.METADATA_UNAVAILABLE,
+            -> R.string.import_source_unavailable
+            ContentImporter.ImportError.DESTINATION_UNAVAILABLE -> R.string.import_destination_unavailable
+            else -> R.string.import_failed
+        }
+        toast(message)
+    }
+
     private fun showPermission() {
         loadJob?.cancel()
         binding.permissionScreen.root.isVisible = true
@@ -225,48 +428,82 @@ class MainActivity : AppCompatActivity() {
     private fun showHome() {
         loadJob?.cancel()
         screen = Screen.HOME
+        clearSelection()
         binding.permissionScreen.root.isVisible = false
         binding.appContainer.isVisible = true
         binding.homeScreen.root.isVisible = true
         binding.browserScreen.root.isVisible = false
-        binding.toolbar.title = getString(R.string.app_name)
-        binding.toolbar.subtitle = null
-        binding.toolbar.navigationIcon = null
-        binding.toolbar.menu.setGroupVisible(R.id.sort_group, false)
-        binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = true
+        renderToolbar()
+        buildQuickAccess()
         updateStorageOverview()
         loadRecentFiles()
+        refreshStorageRoots()
     }
 
-    private fun openDirectory(directory: File) {
+    private fun refreshStorageRoots() {
+        rootDiscoveryJob?.cancel()
+        rootDiscoveryJob = lifecycleScope.launch {
+            val roots = withContext(Dispatchers.IO) { StorageRootRepository(this@MainActivity).discover() }
+            availableRoots = roots
+            primaryRoot = roots.first()
+            if (currentRoot.isPrimary) currentRoot = primaryRoot
+            if (screen != Screen.HOME) return@launch
+            val sharedRoots = roots.filterNot { it.isPrimary }
+            val grid = binding.homeScreen.dualAppGrid
+            grid.removeAllViews()
+            binding.homeScreen.dualAppStatus.isVisible = sharedRoots.isEmpty()
+            sharedRoots.forEachIndexed { index, root ->
+                val card = ViewCategoryBinding.inflate(layoutInflater, grid, false)
+                card.categoryTitle.text = root.label
+                card.categorySubtitle.text = getString(R.string.read_only)
+                card.categoryIcon.setImageResource(R.drawable.ic_download)
+                card.root.setOnClickListener { openDirectory(root.directory, root) }
+                val margin = dp(5)
+                card.root.layoutParams = GridLayout.LayoutParams().apply {
+                    width = 0
+                    height = GridLayout.LayoutParams.WRAP_CONTENT
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                    setMargins(margin, margin, margin, margin)
+                    if (index < 2) topMargin = 0
+                }
+                grid.addView(card.root)
+            }
+        }
+    }
+
+    private fun openDirectory(directory: File, root: StorageRoot? = null) {
         if (!hasStorageAccess()) {
             showPermission()
             return
         }
-        if (!directory.exists() || !directory.isDirectory) {
+        val canonical = try {
+            directory.canonicalFile
+        } catch (_: Exception) {
             toast(R.string.folder_unavailable)
             return
         }
-        if (!directory.canRead()) {
+        val targetRoot = root ?: availableRoots
+            .filter { it.contains(canonical) }
+            .maxByOrNull { it.directory.path.length }
+            ?: primaryRoot
+        if (!targetRoot.contains(canonical) || !canonical.exists() || !canonical.isDirectory) {
+            toast(R.string.folder_unavailable)
+            return
+        }
+        if (!canonical.canRead()) {
             toast(R.string.folder_not_readable)
             return
         }
 
         screen = Screen.BROWSER
-        currentDirectory = directory
+        currentRoot = targetRoot
+        currentDirectory = canonical
+        clearSelection()
         binding.homeScreen.root.isVisible = false
         binding.browserScreen.root.isVisible = true
         binding.permissionScreen.root.isVisible = false
         binding.appContainer.isVisible = true
-        binding.toolbar.title = if (directory == storageRoot) {
-            getString(R.string.internal_storage)
-        } else {
-            directory.name
-        }
-        binding.toolbar.subtitle = displayPath(directory)
-        binding.toolbar.setNavigationIcon(R.drawable.ic_arrow_back)
-        binding.toolbar.menu.setGroupVisible(R.id.sort_group, true)
-        binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = false
+        renderToolbar()
         binding.browserScreen.searchInput.setText("")
         loadFiles()
     }
@@ -334,7 +571,7 @@ class MainActivity : AppCompatActivity() {
                 while (cursor.moveToNext() && result.size < 6) {
                     if (pathColumn < 0 || cursor.isNull(pathColumn)) continue
                     val file = File(cursor.getString(pathColumn))
-                    if (file.isFile && file.canRead()) result += FileItem(file)
+                    if (file.isFile && file.canRead() && primaryRoot.contains(file)) result += FileItem(file)
                 }
             }
         } catch (_: RuntimeException) {
@@ -399,32 +636,154 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
+    private fun handleItemClick(item: FileItem) {
+        if (selectionMode) toggleSelection(item) else openItem(item)
+    }
+
+    private fun startSelection(item: FileItem) {
+        selectionMode = true
+        selectedPaths.add(selectionKey(item.file))
+        renderToolbar()
+    }
+
+    private fun toggleSelection(item: FileItem) {
+        val key = selectionKey(item.file)
+        if (!selectedPaths.add(key)) selectedPaths.remove(key)
+        if (selectedPaths.isEmpty()) selectionMode = false
+        renderToolbar()
+    }
+
+    private fun clearSelection() {
+        selectionMode = false
+        selectedPaths.clear()
+        if (::fileAdapter.isInitialized) fileAdapter.refreshSelection()
+        if (::recentAdapter.isInitialized) recentAdapter.refreshSelection()
+        if (::binding.isInitialized) renderToolbar()
+    }
+
+    private fun selectAllVisible() {
+        val items = if (screen == Screen.BROWSER) fileAdapter.currentList else recentAdapter.currentList
+        items.forEach { selectedPaths.add(selectionKey(it.file)) }
+        renderToolbar()
+    }
+
+    private fun selectedItems(): List<FileItem> {
+        val items = if (screen == Screen.BROWSER) allItems else recentAdapter.currentList
+        return items.filter { selectedPaths.contains(selectionKey(it.file)) }
+    }
+
+    private fun selectionKey(file: File): String {
+        return try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
+    }
+
+    private fun canModify(file: File): Boolean = !primaryRoot.readOnly && primaryRoot.contains(file)
+
+    private fun renderToolbar() {
+        fileAdapter.refreshSelection()
+        recentAdapter.refreshSelection()
+        binding.toolbar.menu.setGroupVisible(R.id.selection_group, selectionMode)
+        binding.browserScreen.searchLayout.isEnabled = !selectionMode
+        if (selectionMode) {
+            binding.toolbar.title = getString(R.string.selected_count, selectedPaths.size)
+            binding.toolbar.subtitle = null
+            binding.toolbar.setNavigationIcon(R.drawable.ic_close)
+            binding.toolbar.setNavigationContentDescription(R.string.close_selection)
+            binding.toolbar.menu.setGroupVisible(R.id.sort_group, false)
+            binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = false
+            binding.browserScreen.newFolderButton.isVisible = false
+            val selected = selectedItems()
+            binding.toolbar.menu.findItem(R.id.action_selection_share)?.isVisible =
+                selected.isNotEmpty() && selected.none { it.isDirectory }
+            binding.toolbar.menu.findItem(R.id.action_selection_copy)?.isVisible = selected.isNotEmpty()
+            val canModify = selected.isNotEmpty() && selected.all { canModify(it.file) }
+            binding.toolbar.menu.findItem(R.id.action_selection_move)?.isVisible = canModify
+            binding.toolbar.menu.findItem(R.id.action_selection_delete)?.isVisible = canModify
+            return
+        }
+        binding.toolbar.menu.setGroupVisible(R.id.selection_group, false)
+        if (screen == Screen.HOME) {
+            binding.toolbar.title = getString(R.string.app_name)
+            binding.toolbar.subtitle = null
+            binding.toolbar.navigationIcon = null
+            binding.toolbar.menu.setGroupVisible(R.id.sort_group, false)
+            binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = true
+            binding.browserScreen.newFolderButton.isVisible = false
+        } else {
+            binding.toolbar.title = if (currentDirectory == currentRoot.directory) {
+                currentRoot.label
+            } else {
+                currentDirectory.name
+            }
+            binding.toolbar.subtitle = displayPath(currentDirectory)
+            binding.toolbar.setNavigationIcon(R.drawable.ic_arrow_back)
+            binding.toolbar.setNavigationContentDescription(R.string.navigate_up)
+            binding.toolbar.menu.setGroupVisible(R.id.sort_group, true)
+            binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = false
+            binding.browserScreen.newFolderButton.isVisible = currentRoot.isPrimary && !currentRoot.readOnly
+        }
+    }
+
     private fun openItem(item: FileItem) {
         if (item.isDirectory) openDirectory(item.file) else openFile(item.file)
     }
 
-    private fun openFile(file: File) {
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+    private fun openFile(file: File, forceChooser: Boolean = false) {
+        val uri = try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        } catch (_: IllegalArgumentException) {
+            toast(R.string.operation_failed)
+            return
+        }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, FileUtils.mimeType(file))
+            clipData = ClipData.newUri(contentResolver, file.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
-            startActivity(Intent.createChooser(intent, getString(R.string.open_with)))
+            startActivity(if (forceChooser) Intent.createChooser(intent, getString(R.string.open_with)) else intent)
         } catch (_: ActivityNotFoundException) {
             toast(R.string.no_app_to_open)
         }
     }
 
-    private fun shareFile(file: File) {
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = FileUtils.mimeType(file)
-            putExtra(Intent.EXTRA_STREAM, uri)
+    private fun shareFile(file: File) = shareFiles(listOf(file))
+
+    private fun shareFiles(files: List<File>) {
+        if (files.any { it.isDirectory }) {
+            toast(R.string.share_folders_unsupported)
+            return
+        }
+        if (files.isEmpty() || files.any { !it.isFile || !it.canRead() }) {
+            toast(R.string.files_no_longer_available)
+            return
+        }
+        val uris = try {
+            files.map { FileProvider.getUriForFile(this, "$packageName.fileprovider", it) }
+        } catch (_: IllegalArgumentException) {
+            toast(R.string.operation_failed)
+            return
+        }
+        val types = files.map(FileUtils::mimeType).distinct()
+        val topLevelTypes = types.map { it.substringBefore('/') }.distinct()
+        val mimeType = when {
+            types.size == 1 -> types.single()
+            topLevelTypes.size == 1 -> "${topLevelTypes.single()}/*"
+            else -> "*/*"
+        }
+        val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
+            type = mimeType
+            if (uris.size == 1) {
+                putExtra(Intent.EXTRA_STREAM, uris.single())
+            } else {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            }
+            clipData = ClipData.newUri(contentResolver, getString(R.string.share_files), uris.first()).apply {
+                uris.drop(1).forEach { addItem(ClipData.Item(it)) }
+            }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
-            startActivity(Intent.createChooser(intent, getString(R.string.share_file)))
+            startActivity(Intent.createChooser(intent, getString(R.string.share_files)))
         } catch (_: ActivityNotFoundException) {
             toast(R.string.no_app_to_share)
         }
@@ -434,10 +793,21 @@ class MainActivity : AppCompatActivity() {
         val popup = PopupMenu(this, anchor)
         popup.inflate(R.menu.menu_file)
         popup.menu.findItem(R.id.action_share)?.isVisible = !item.isDirectory
+        popup.menu.findItem(R.id.action_open)?.isVisible = !item.isDirectory
+        popup.menu.findItem(R.id.action_open_with)?.isVisible = !item.isDirectory
+        popup.menu.findItem(R.id.action_add_quick_access)?.isVisible =
+            item.isDirectory && primaryRoot.contains(item.file)
+        popup.menu.findItem(R.id.action_move)?.isVisible = canModify(item.file)
+        popup.menu.findItem(R.id.action_rename)?.isVisible = canModify(item.file)
+        popup.menu.findItem(R.id.action_delete)?.isVisible = canModify(item.file)
         popup.setOnMenuItemClickListener { action ->
             when (action.itemId) {
                 R.id.action_open -> openItem(item)
+                R.id.action_open_with -> openFile(item.file, forceChooser = true)
                 R.id.action_share -> shareFile(item.file)
+                R.id.action_copy -> beginTransfer(listOf(item), move = false)
+                R.id.action_move -> beginTransfer(listOf(item), move = true)
+                R.id.action_add_quick_access -> addFolderToQuickAccess(item.file)
                 R.id.action_rename -> showRenameDialog(item)
                 R.id.action_details -> showDetails(item)
                 R.id.action_delete -> confirmDelete(item)
@@ -448,7 +818,92 @@ class MainActivity : AppCompatActivity() {
         popup.show()
     }
 
+    private fun beginTransfer(items: List<FileItem>, move: Boolean) {
+        if (items.isEmpty()) return
+        if (move && items.any { !canModify(it.file) }) {
+            toast(R.string.operation_invalid)
+            return
+        }
+        pendingTransfer = PendingTransfer(items.map { it.file }, move)
+        val title = getString(if (move) R.string.move_to else R.string.copy_to)
+        folderPickerLauncher.launch(FolderPickerActivity.intent(this, title))
+    }
+
+    private fun executeTransfer(transfer: PendingTransfer, destination: File) {
+        val progress = ProgressBar(this)
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.working_on_files)
+            .setView(progress)
+            .setCancelable(false)
+            .show()
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                if (transfer.move) {
+                    fileOperations.move(transfer.sources, destination)
+                } else {
+                    fileOperations.copy(transfer.sources, destination)
+                }
+            }
+            dialog.dismiss()
+            scanChangedFiles(result)
+            clearSelection()
+            refreshAfterChange()
+            showOperationResult(
+                if (transfer.move) FileOperations.Operation.MOVE else FileOperations.Operation.COPY,
+                result,
+            )
+        }
+    }
+
+    private fun deleteItems(items: List<FileItem>) {
+        if (items.isEmpty() || items.any { !canModify(it.file) }) return
+        val progress = ProgressBar(this)
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.working_on_files)
+            .setView(progress)
+            .setCancelable(false)
+            .show()
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { fileOperations.delete(items.map { it.file }) }
+            dialog.dismiss()
+            scanChangedFiles(result)
+            clearSelection()
+            refreshAfterChange()
+            showOperationResult(FileOperations.Operation.DELETE, result)
+        }
+    }
+
+    private fun scanChangedFiles(result: FileOperations.BatchResult) {
+        val paths = result.items.flatMap { item ->
+            listOfNotNull(item.source.absolutePath, item.destination?.absolutePath)
+        }.toTypedArray()
+        if (paths.isNotEmpty()) MediaScannerConnection.scanFile(this, paths, null, null)
+    }
+
+    private fun showOperationResult(operation: FileOperations.Operation, result: FileOperations.BatchResult) {
+        if (result.isSuccess) {
+            val message = when (operation) {
+                FileOperations.Operation.COPY -> R.string.copy_complete
+                FileOperations.Operation.MOVE -> R.string.move_complete
+                FileOperations.Operation.DELETE -> R.string.delete_complete
+            }
+            Toast.makeText(this, getString(message, result.successCount), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val failedNames = result.items.filterNot { it.isSuccess }
+            .joinToString("\n") { "• ${it.source.name}" }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.operation_failed)
+            .setMessage(
+                getString(R.string.operation_partial, result.successCount, result.failureCount) +
+                    "\n\n" + failedNames,
+            )
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
     private fun showNewFolderDialog() {
+        if (!currentRoot.isPrimary || !canModify(currentDirectory)) return
         val input = DialogInputBinding.inflate(layoutInflater)
         input.inputLayout.setHint(R.string.folder_name)
         MaterialAlertDialogBuilder(this)
@@ -462,6 +917,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createFolder(name: String) {
+        if (!currentRoot.isPrimary || !canModify(currentDirectory)) return
         if (!FileUtils.isValidName(name)) {
             toast(R.string.invalid_name)
             return
@@ -479,6 +935,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenameDialog(item: FileItem) {
+        if (!canModify(item.file)) return
         val input = DialogInputBinding.inflate(layoutInflater)
         input.inputLayout.setHint(R.string.new_name)
         input.inputEditText.setText(item.name)
@@ -494,6 +951,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renameItem(item: FileItem, newName: String) {
+        if (!canModify(item.file)) return
         if (!FileUtils.isValidName(newName)) {
             toast(R.string.invalid_name)
             return
@@ -511,6 +969,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(item: FileItem) {
+        if (!canModify(item.file)) return
         val message = getString(
             if (item.isDirectory) R.string.delete_folder_message else R.string.delete_file_message,
             item.name,
@@ -523,13 +982,17 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun deleteItem(item: FileItem) {
-        lifecycleScope.launch {
-            val deleted = withContext(Dispatchers.IO) { item.file.deleteRecursively() }
-            toast(if (deleted) R.string.item_deleted else R.string.operation_failed)
-            if (deleted) refreshAfterChange()
-        }
+    private fun confirmDelete(items: List<FileItem>) {
+        if (items.isEmpty() || items.any { !canModify(it.file) }) return
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.delete)
+            .setMessage(getString(R.string.delete_selected_message, items.size))
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ -> deleteItems(items) }
+            .show()
     }
+
+    private fun deleteItem(item: FileItem) = deleteItems(listOf(item))
 
     private fun showDetails(item: FileItem) {
         val type = if (item.isDirectory) {
@@ -556,14 +1019,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun displayPath(file: File): String {
-        val relative = file.relativeToOrNull(storageRoot)?.path.orEmpty()
-        return if (relative.isEmpty()) getString(R.string.internal_storage)
-        else getString(R.string.path_format, relative)
+        val relative = currentRoot.relativePath(file).orEmpty()
+        return if (relative.isEmpty()) currentRoot.label
+        else getString(R.string.shared_path_format, currentRoot.label, relative)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun toast(message: Int) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private companion object {
+        const val STATE_PENDING_IMPORT = "pending_import_uri"
     }
 }

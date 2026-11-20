@@ -6,11 +6,16 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.view.isVisible
 import com.folio.files.databinding.ItemFileBinding
 
 class FileAdapter(
     private val onClick: (FileItem) -> Unit,
     private val onMore: (android.view.View, FileItem) -> Unit,
+    private val onLongClick: (FileItem) -> Boolean = { false },
+    private val isSelected: (FileItem) -> Boolean = { false },
+    private val isSelectionMode: () -> Boolean = { false },
+    private val showActions: Boolean = true,
 ) : ListAdapter<FileItem, FileAdapter.FileViewHolder>(FileDiff) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
@@ -20,6 +25,10 @@ class FileAdapter(
 
     override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
         holder.bind(getItem(position))
+    }
+
+    fun refreshSelection() {
+        notifyItemRangeChanged(0, itemCount)
     }
 
     inner class FileViewHolder(private val binding: ItemFileBinding) :
@@ -40,7 +49,24 @@ class FileAdapter(
                 if (item.isDirectory) R.drawable.bg_folder_icon else R.drawable.bg_file_icon,
             )
             binding.fileMore.contentDescription = context.getString(R.string.file_actions, item.name)
+            val selectionMode = isSelectionMode()
+            val selected = isSelected(item)
+            binding.root.isSelected = selected
+            binding.fileCheck.isVisible = selectionMode
+            binding.fileCheck.setImageResource(
+                if (selected) R.drawable.ic_check_circle else R.drawable.ic_selection_circle,
+            )
+            binding.fileMore.isVisible = showActions && !selectionMode
+            binding.root.contentDescription = if (selectionMode) {
+                context.getString(
+                    if (selected) R.string.selected_file else R.string.unselected_file,
+                    item.name,
+                )
+            } else {
+                null
+            }
             binding.root.setOnClickListener { onClick(item) }
+            binding.root.setOnLongClickListener { onLongClick(item) }
             binding.fileMore.setOnClickListener { onMore(it, item) }
         }
 

@@ -7,10 +7,10 @@
     <meta name="description" content="MyFiles is a private, offline file manager for Android shared storage.">
     <title>MyFiles — Your files, in order</title>
     <style>
-        @font-face { font-family: Manrope; src: url('/manrope.ttf') format('truetype'); font-weight: 200 800; font-display: swap; }
+        @font-face { font-family: Roboto; src: url('/roboto.ttf') format('truetype'); font-weight: 100 900; font-display: swap; }
         :root { --ink:#18201d; --muted:#65706a; --paper:#f4f6f1; --surface:#fff; --blue:#2457c5; --navy:#193d88; --line:#dce2dc; }
         * { box-sizing:border-box; }
-        body { margin:0; font-family:Manrope,sans-serif; color:var(--ink); background:var(--paper); }
+        body { margin:0; font-family:Roboto,sans-serif; color:var(--ink); background:var(--paper); }
         a { color:inherit; }
         .wrap { width:min(1120px,calc(100% - 40px)); margin:auto; }
         header { height:88px; display:flex; align-items:center; justify-content:space-between; }
@@ -100,7 +100,7 @@
                             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7zm-14 9v2h14v-2z"/></svg>
                             Download MyFiles
                         </a>
-                        <div class="meta">Version 1.1 · APK<br>Free · No ads</div>
+                        <div class="meta">Version 1.2 · APK<br>Free · No ads</div>
                     </div>
                     <div class="privacy">
                         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 1-9 4v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9z"/></svg>
@@ -140,7 +140,7 @@
                 <div><span class="step-number">03 / ORGANIZE</span><h3>Choose your file access</h3><p>On Android 11+, enable All files access in the system settings to browse shared storage.</p></div>
             </section>
 
-            <div class="note"><strong>A note about permissions:</strong> MyFiles’s core purpose is managing files, so it requests broad shared-storage access. It cannot read other apps’ private data. This is a sideloaded prototype, not a Play Store release; only install it if you trust this build.</div>
+            <div class="note"><strong>A note about permissions:</strong> MyFiles’s core purpose is managing files, so it requests broad shared-storage access. It cannot read other apps’ private data. Dual-app Downloads appear only when Android and your phone share that storage; otherwise, use the cloned app’s Open with or Share action to try importing a copy. This is a sideloaded prototype, not a Play Store release; only install it if you trust this build.</div>
         </main>
 
         <footer><span>MyFiles · Files, without the fuss.</span><span>Kotlin · Material 3 · Light &amp; dark</span></footer>
