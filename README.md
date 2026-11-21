@@ -43,21 +43,35 @@ Normal **Open** launches Android’s `ACTION_VIEW` flow directly so an existing 
 
 Quick Access customization is stored locally in SharedPreferences. Removing a shortcut never deletes its folder. Custom entries are confined to primary storage, and Reset restores the original six shortcuts.
 
-## Build
+## Build & test yourself (no AI credits)
 
-Install JDK 17 and Android SDK 35, then run:
+AI credits are spent only when you chat with the assistant. Building, testing and uploading the APK are ordinary commands — run them yourself and they cost no credits.
+
+### In the studio terminal (this workspace is pre-configured)
+
+Edit the code, then run one command:
 
 ```bash
-./gradlew testDebugUnitTest assembleDebug lintDebug
+./ship.sh               # build + unit tests, then upload to the download link
+./ship.sh --fast        # skip unit tests for quicker iteration
+./ship.sh --build-only  # just build the APK; install it manually, no upload
 ```
 
-The installable debug APK is generated at:
+`./ship.sh` uploads to the same download page (<https://d241ahnq6f1f6p.cloudfront.net>) and refreshes the CDN, so you re-download on the phone to test. Sideloading reinstalls fine without a version bump.
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
+### On your own computer (fastest loop)
+
+Install Android Studio (it bundles JDK 17 and the Android SDK), open this project, connect your phone via USB with **Developer options → USB debugging** enabled, and press **Run ▶** to install directly — no upload or download needed.
+
+Or build from a terminal (JDK 17 + Android SDK 35):
+
+```bash
+./gradlew testDebugUnitTest assembleDebug
 ```
 
-Install it with `adb install app-debug.apk`, or copy it to a phone and open it. Android may ask you to allow installation from the browser or file manager because this is a sideloaded prototype.
+The installable debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r app-debug.apk`, or copy it to the phone and open it. Android may ask you to allow installation from the browser or file manager because this is a sideloaded prototype.
+
+> The studio workspace runs on ARM64 and uses a pre-configured aapt2 workaround; a normal computer needs no workaround. If the workspace is ever reset, the build setup may need restoring — ask the assistant once, or use Android Studio locally.
 
 ## Notes
 
