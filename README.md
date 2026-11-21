@@ -10,7 +10,8 @@ MyFiles is a native, offline file manager for shared phone storage. It is built 
 - Recent shared files from MediaStore
 - Folder browsing with folders-first sorting
 - Search within the current folder and name/date/size sorting
-- Long-press multi-select with batch Share, Copy, Move and confirmed Delete
+- Long-press multi-select with a bottom quick-action bar (Share, Move, Delete, More) and confirmed batch Delete
+- Swipe a file or folder right to delete it instantly, with a 3-second Undo and no confirmation; swipe as many rows as you like in a row
 - Single-item and batch Copy/Move with a primary-storage destination picker
 - Open using Android’s default-app flow, or choose an app explicitly with Open with
 - Single and multiple file sharing using read-only FileProvider grants
@@ -34,7 +35,9 @@ Clone behavior varies by phone manufacturer. Android does not expose every clone
 
 ## File operations
 
-Copy and Move destinations are confined to primary storage. Existing destination names are never overwritten, and folders cannot be copied or moved into themselves. Moves copy first and delete the source only after a successful copy when a direct rename is unavailable. Batch operations report partial failures. Share accepts files only; directories cannot be attached as recursive shares.
+Copy and Move destinations are confined to primary storage. Existing destination names are never overwritten, and folders cannot be copied or moved into themselves. Moves copy first and delete the source only after a successful copy when a direct rename is unavailable. Batch operations report partial failures with the reason for each affected file. Share accepts files only; directories cannot be attached as recursive shares.
+
+Swipe-to-delete removes the row immediately but only deletes the file after a 3-second undo window; Undo restores every swipe that has not committed yet. If the app is closed or rotated inside the window, nothing is deleted. When Android itself refuses a raw delete (for example media owned by another app), MyFiles asks through Android's system delete-consent dialog instead of failing silently.
 
 Normal **Open** launches Android’s `ACTION_VIEW` flow directly so an existing default viewer is honored. Android may offer **Just once/Always** when no default exists. **Open with** deliberately displays the chooser. The exact default-app controls and how defaults are cleared are controlled by Android or the phone manufacturer.
 
@@ -58,6 +61,6 @@ Install it with `adb install app-debug.apk`, or copy it to a phone and open it. 
 
 ## Notes
 
-The Recent list comes from Android’s MediaStore and shows up to six readable primary-storage files. Quick-access folders depend on the manufacturer’s folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
+The Recent list comes from Android’s MediaStore with no item limit; it shows five rows at a time and scrolls for more. Quick-access folders depend on the manufacturer’s folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
 
 The bundled Roboto font is licensed under the SIL Open Font License; its license is included in `app/src/main/assets/OFL-Roboto.txt`.

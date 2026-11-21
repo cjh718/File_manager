@@ -4,6 +4,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -47,6 +48,7 @@ class FileOperations(private val primaryStorage: File) {
         MOVE_FAILED,
         DELETE_FAILED,
         SOURCE_DELETE_FAILED,
+        PERMISSION_DENIED,
     }
 
     data class ItemResult(
@@ -180,7 +182,8 @@ class FileOperations(private val primaryStorage: File) {
                 error = Error.MISSING_SOURCE
             } else if (!source.isFile && !source.isDirectory) {
                 error = Error.INVALID_SOURCE
-            } else if (!source.canRead()) {
+            } else if (operation != Operation.DELETE && !source.canRead()) {
+                // Deleting needs write access to the parent, not read access to the file itself.
                 error = Error.UNREADABLE_SOURCE
             } else if (source.name.isBlank() || source == primary) {
                 error = Error.INVALID_SOURCE
@@ -295,7 +298,8 @@ class FileOperations(private val primaryStorage: File) {
             return failed(Operation.MOVE, source, destination, error, failure.message)
         }
 
-        return if (deleteTreeWithoutFollowingLinks(source)) {
+        val sourceDeleteFailure = deleteTreeWithoutFollowingLinks(source)
+        return if (sourceDeleteFailure == null) {
             ItemResult(Operation.MOVE, source, destination, Status.MOVED)
         } else {
             ItemResult(
@@ -304,16 +308,18 @@ class FileOperations(private val primaryStorage: File) {
                 destination = destination,
                 status = Status.COPIED_BUT_SOURCE_DELETE_FAILED,
                 error = Error.SOURCE_DELETE_FAILED,
-                message = "The destination is complete, but the source could not be fully deleted.",
+                message = "The destination is complete, but the source could not be fully deleted. " +
+                    sourceDeleteFailure.message,
             )
         }
     }
 
     private fun deleteItem(plan: Plan): ItemResult {
-        return if (deleteTreeWithoutFollowingLinks(plan.source)) {
+        val failure = deleteTreeWithoutFollowingLinks(plan.source)
+        return if (failure == null) {
             ItemResult(Operation.DELETE, plan.source, null, Status.DELETED)
         } else {
-            failed(Operation.DELETE, plan.source, null, Error.DELETE_FAILED)
+            failed(Operation.DELETE, plan.source, null, failure.error, failure.message)
         }
     }
 
@@ -406,20 +412,28 @@ class FileOperations(private val primaryStorage: File) {
         destination.setLastModified(source.lastModified())
     }
 
-    private fun deleteTreeWithoutFollowingLinks(file: File): Boolean {
-        if (Files.isSymbolicLink(file.toPath()) || !existsWithoutFollowingLinks(file)) return false
+    /** Returns null when the whole tree was deleted, otherwise the first failure with its cause. */
+    private fun deleteTreeWithoutFollowingLinks(file: File): ExecutionFailure? {
+        if (Files.isSymbolicLink(file.toPath()) || !existsWithoutFollowingLinks(file)) {
+            return ExecutionFailure(Error.DELETE_FAILED, "The source is missing or a symbolic link: ${file.path}")
+        }
         if (isDirectoryWithoutFollowingLinks(file)) {
-            val children = file.listFiles() ?: return false
-            var complete = true
+            val children = file.listFiles()
+                ?: return ExecutionFailure(Error.DELETE_FAILED, "Cannot list ${file.path}")
             children.forEach { child ->
-                if (!deleteTreeWithoutFollowingLinks(child)) complete = false
+                deleteTreeWithoutFollowingLinks(child)?.let { return it }
             }
-            if (!complete) return false
         }
         return try {
             Files.deleteIfExists(file.toPath())
-        } catch (_: Exception) {
-            false
+            null
+        } catch (e: AccessDeniedException) {
+            ExecutionFailure(Error.PERMISSION_DENIED, e.displayMessage())
+        } catch (e: SecurityException) {
+            // Includes android.app.RecoverableSecurityException on Android 10.
+            ExecutionFailure(Error.PERMISSION_DENIED, e.displayMessage())
+        } catch (e: Exception) {
+            ExecutionFailure(Error.DELETE_FAILED, e.displayMessage())
         }
     }
 

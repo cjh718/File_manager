@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -225,6 +226,55 @@ class FileOperationsTest {
         assertFalse(second.exists())
         assertEquals(FileOperations.Error.SOURCE_OUTSIDE_PRIMARY, rejected.error)
         assertTrue(outside.exists())
+    }
+
+    @Test
+    fun deleteReportsPermissionDeniedWithCause() {
+        val parent = File(primary, "locked").apply { assertTrue(mkdir()) }
+        val child = File(parent, "child.txt").apply { writeText("child") }
+        assertTrue(parent.setWritable(false, false))
+        assumeTrue("test requires a non-root user", !parent.canWrite())
+        try {
+            val result = operations.delete(child)
+
+            assertEquals(FileOperations.Status.FAILED, result.status)
+            assertEquals(FileOperations.Error.PERMISSION_DENIED, result.error)
+            assertTrue(result.message != null)
+            assertTrue(child.exists())
+        } finally {
+            parent.setWritable(true, false)
+        }
+    }
+
+    @Test
+    fun deleteSucceedsOnUnreadableFile() {
+        val file = File(primary, "unreadable.txt").apply { writeText("secret") }
+        assertTrue(file.setReadable(false, false))
+        assumeTrue("test requires a non-root user", !file.canRead())
+
+        val result = operations.delete(file)
+
+        assertEquals(FileOperations.Status.DELETED, result.status)
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun deleteFolderWithSymlinkChildReportsCause() {
+        val target = File(temporaryDirectory, "target.txt").apply { writeText("target") }
+        val folder = File(primary, "with-link").apply { assertTrue(mkdir()) }
+        try {
+            Files.createSymbolicLink(File(folder, "link").toPath(), target.toPath())
+        } catch (e: Exception) {
+            assumeNoException(e)
+        }
+
+        val result = operations.delete(folder)
+
+        assertEquals(FileOperations.Status.FAILED, result.status)
+        assertEquals(FileOperations.Error.DELETE_FAILED, result.error)
+        assertTrue(result.message != null)
+        assertTrue(folder.exists())
+        assertEquals("target", target.readText())
     }
 
     @Test

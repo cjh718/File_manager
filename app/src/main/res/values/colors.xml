@@ -19,4 +19,6 @@
     <color name="storage_track">#55FFFFFF</color>
     <color name="storage_button_stroke">#88FFFFFF</color>
     <color name="ic_launcher_background">#061D47</color>
+    <color name="swipe_delete_background">#C62828</color>
+    <color name="delete_action">#C62828</color>
 </resources>

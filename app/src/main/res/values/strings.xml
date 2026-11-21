@@ -126,4 +126,14 @@
     <string name="got_it">Got it</string>
     <string name="shared_path_format">%1$s / %2$s</string>
     <string name="quick_access_missing">This shortcut’s folder is missing. Customize Quick access to remove it.</string>
+    <string name="more">More</string>
+    <string name="undo">Undo</string>
+    <string name="delete_not_permitted">This item can’t be deleted here. Allow file access or use a writable folder.</string>
+    <string name="delete_consent_unavailable">Android did not offer a way to delete this file.</string>
+    <string name="delete_pending_single">Deleted “%1$s”</string>
+    <string name="deletes_restored">Restored %1$d item(s).</string>
+    <string name="error_permission_denied">Permission denied by Android</string>
+    <string name="error_missing_source">No longer exists</string>
+    <string name="error_unreadable_source">Cannot be read</string>
+    <string name="error_outside_storage">Outside internal storage</string>
 </resources>

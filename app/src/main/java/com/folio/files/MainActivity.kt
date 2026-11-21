@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ContentResolver
 import android.content.Intent
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.media.MediaScannerConnection
@@ -22,6 +23,7 @@ import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -29,16 +31,20 @@ import androidx.core.content.FileProvider
 import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.folio.files.databinding.ActivityMainBinding
 import com.folio.files.databinding.DialogInputBinding
 import com.folio.files.databinding.ViewCategoryBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import java.io.File
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -48,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     private enum class SortMode { NAME, MODIFIED, SIZE }
 
     private data class PendingTransfer(val sources: List<File>, val move: Boolean)
+
+    /** A swiped-away row whose real delete runs only after the undo window expires. */
+    private data class PendingDelete(val item: FileItem, val job: Job, var committing: Boolean = false)
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var fileAdapter: FileAdapter
@@ -67,10 +76,14 @@ class MainActivity : AppCompatActivity() {
     private var sortMode = SortMode.NAME
     private var allItems = emptyList<FileItem>()
     private var loadJob: Job? = null
+    private var recentJob: Job? = null
     private var rootDiscoveryJob: Job? = null
     private var selectionMode = false
     private val selectedPaths = linkedSetOf<String>()
     private var pendingTransfer: PendingTransfer? = null
+    private val pendingDeletes = LinkedHashMap<String, PendingDelete>()
+    private var undoSnackbar: Snackbar? = null
+    private var pendingConsentFiles: List<File> = emptyList()
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -111,6 +124,20 @@ class MainActivity : AppCompatActivity() {
         pendingTransfer = null
         if (result.resultCode == RESULT_OK && path != null && transfer != null) {
             executeTransfer(transfer, File(path))
+        }
+    }
+
+    private val deleteConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val files = pendingConsentFiles
+        pendingConsentFiles = emptyList()
+        if (files.isEmpty()) return@registerForActivityResult
+        if (result.resultCode == RESULT_OK) {
+            finishConsentedDeletes(files)
+        } else {
+            toast(R.string.delete_not_permitted)
+            refreshAfterChange()
         }
     }
 
@@ -167,8 +194,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::binding.isInitialized && binding.permissionScreen.root.isVisible && hasStorageAccess()) {
             continueWithStorageAccess()
-        } else if (::binding.isInitialized && binding.appContainer.isVisible && binding.homeScreen.root.isVisible) {
-            buildQuickAccess()
+        } else if (::binding.isInitialized && binding.appContainer.isVisible) {
+            if (binding.homeScreen.root.isVisible) buildQuickAccess()
+            // Permissions may have changed in system settings while we were backgrounded.
+            refreshStorageRoots()
         }
     }
 
@@ -201,8 +230,13 @@ class MainActivity : AppCompatActivity() {
         binding.homeScreen.recentList.apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
             adapter = recentAdapter
-            isNestedScrollingEnabled = false
         }
+
+        val canSwipe = { item: FileItem -> !selectionMode && canModify(item.file) }
+        ItemTouchHelper(SwipeToDeleteCallback(this, fileAdapter, canSwipe, ::enqueueDeferredDelete))
+            .attachToRecyclerView(binding.browserScreen.fileList)
+        ItemTouchHelper(SwipeToDeleteCallback(this, recentAdapter, canSwipe, ::enqueueDeferredDelete))
+            .attachToRecyclerView(binding.homeScreen.recentList)
     }
 
     private fun setupActions() {
@@ -224,7 +258,7 @@ class MainActivity : AppCompatActivity() {
         binding.browserScreen.newFolderButton.setOnClickListener { showNewFolderDialog() }
         binding.browserScreen.searchInput.doAfterTextChanged {
             if (selectionMode) clearSelection()
-            applyFilter()
+            applyFilter(scrollToTop = true)
         }
         binding.toolbar.setNavigationOnClickListener {
             when {
@@ -242,28 +276,25 @@ class MainActivity : AppCompatActivity() {
                     selectAllVisible()
                     true
                 }
-                R.id.action_selection_share -> {
-                    shareFiles(selectedItems().map { it.file })
-                    true
-                }
-                R.id.action_selection_copy -> {
-                    beginTransfer(selectedItems(), move = false)
-                    true
-                }
-                R.id.action_selection_move -> {
-                    beginTransfer(selectedItems(), move = true)
-                    true
-                }
-                R.id.action_selection_delete -> {
-                    confirmDelete(selectedItems())
-                    true
-                }
                 R.id.action_storage_settings -> {
                     requestStorageAccess()
                     true
                 }
                 else -> false
             }
+        }
+
+        binding.selectionBar.barShare.setOnClickListener {
+            shareFiles(selectedItems().map { it.file })
+        }
+        binding.selectionBar.barMove.setOnClickListener {
+            beginTransfer(selectedItems(), move = true)
+        }
+        binding.selectionBar.barDelete.setOnClickListener {
+            confirmDelete(selectedItems())
+        }
+        binding.selectionBar.barMore.setOnClickListener {
+            SelectionMoreSheet().show(supportFragmentManager, "selection_more")
         }
     }
 
@@ -295,7 +326,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun addFolderToQuickAccess(directory: File) {
+    internal fun addFolderToQuickAccess(directory: File) {
         try {
             quickAccessStore.add(directory)
             toast(R.string.shortcut_added)
@@ -312,6 +343,18 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.READ_EXTERNAL_STORAGE,
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    /** Live write-permission check; unlike a cached root flag it cannot go stale. */
+    private fun hasWriteAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
             ) == PackageManager.PERMISSION_GRANTED
         }
     }
@@ -334,7 +377,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             val permissions = buildList {
                 add(Manifest.permission.READ_EXTERNAL_STORAGE)
-                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                    // Android 10 legacy storage still needs WRITE for raw-path file operations.
                     add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             }
@@ -467,6 +511,7 @@ class MainActivity : AppCompatActivity() {
             availableRoots = roots
             primaryRoot = roots.first()
             if (currentRoot.isPrimary) currentRoot = primaryRoot
+            renderToolbar()
             if (screen != Screen.HOME) return@launch
             val sharedRoots = roots.filterNot { it.isPrimary }
             val grid = binding.homeScreen.dualAppGrid
@@ -555,9 +600,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadRecentFiles() {
+        recentJob?.cancel()
         binding.homeScreen.recentProgress.isVisible = true
-        lifecycleScope.launch {
-            val recent = withContext(Dispatchers.IO) { queryRecentFiles() }
+        recentJob = lifecycleScope.launch {
+            val pending = pendingDeletes.keys.toSet()
+            val recent = withContext(Dispatchers.IO) {
+                queryRecentFiles().filterNot { pending.contains(selectionKey(it.file)) }
+            }
             if (screen != Screen.HOME) return@launch
             binding.homeScreen.recentProgress.isVisible = false
             recentAdapter.submitList(recent)
@@ -568,6 +617,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun queryRecentFiles(): List<FileItem> {
         val projection = arrayOf(MediaStore.Files.FileColumns.DATA)
+        val rootPrefix = try {
+            storageRoot.canonicalPath
+        } catch (_: Exception) {
+            storageRoot.absolutePath
+        }
         val args = Bundle().apply {
             putStringArray(
                 ContentResolver.QUERY_ARG_SORT_COLUMNS,
@@ -577,7 +631,12 @@ class MainActivity : AppCompatActivity() {
                 ContentResolver.QUERY_ARG_SORT_DIRECTION,
                 ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
             )
-            putInt(ContentResolver.QUERY_ARG_LIMIT, 6)
+            // Skip other volumes in SQL; no row limit — the list scrolls to show everything.
+            putString(
+                ContentResolver.QUERY_ARG_SQL_SELECTION,
+                "${MediaStore.Files.FileColumns.DATA} LIKE ?",
+            )
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("$rootPrefix/%"))
         }
         val result = mutableListOf<FileItem>()
         try {
@@ -588,7 +647,7 @@ class MainActivity : AppCompatActivity() {
                 null,
             )?.use { cursor ->
                 val pathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-                while (cursor.moveToNext() && result.size < 6) {
+                while (cursor.moveToNext()) {
                     if (pathColumn < 0 || cursor.isNull(pathColumn)) continue
                     val file = File(cursor.getString(pathColumn))
                     if (file.isFile && file.canRead() && primaryRoot.contains(file)) result += FileItem(file)
@@ -606,8 +665,11 @@ class MainActivity : AppCompatActivity() {
         binding.browserScreen.loadingIndicator.isVisible = true
         binding.browserScreen.emptyView.isVisible = false
         loadJob = lifecycleScope.launch {
+            val pending = pendingDeletes.keys.toSet()
             val items = withContext(Dispatchers.IO) {
-                directory.listFiles()?.map(::FileItem)
+                directory.listFiles()
+                    ?.filterNot { pending.contains(selectionKey(it)) }
+                    ?.map(::FileItem)
             }
             if (directory != currentDirectory || screen != Screen.BROWSER) return@launch
             binding.browserScreen.loadingIndicator.isVisible = false
@@ -623,7 +685,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyFilter() {
+    private fun applyFilter(scrollToTop: Boolean = false) {
         if (screen != Screen.BROWSER) return
         val query = binding.browserScreen.searchInput.text?.toString()?.trim().orEmpty()
         val filtered = if (query.isEmpty()) {
@@ -641,7 +703,7 @@ class MainActivity : AppCompatActivity() {
         }
         val visibleItems = filtered.sortedWith(comparator)
         fileAdapter.submitList(visibleItems) {
-            binding.browserScreen.fileList.scrollToPosition(0)
+            if (scrollToTop) binding.browserScreen.fileList.scrollToPosition(0)
         }
         binding.browserScreen.emptyView.setText(
             if (query.isNotEmpty() && allItems.isNotEmpty()) R.string.no_search_results
@@ -652,7 +714,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setSortMode(mode: SortMode): Boolean {
         sortMode = mode
-        applyFilter()
+        applyFilter(scrollToTop = true)
         return true
     }
 
@@ -681,13 +743,13 @@ class MainActivity : AppCompatActivity() {
         if (::binding.isInitialized) renderToolbar()
     }
 
-    private fun selectAllVisible() {
+    internal fun selectAllVisible() {
         val items = if (screen == Screen.BROWSER) fileAdapter.currentList else recentAdapter.currentList
         items.forEach { selectedPaths.add(selectionKey(it.file)) }
         renderToolbar()
     }
 
-    private fun selectedItems(): List<FileItem> {
+    internal fun selectedItems(): List<FileItem> {
         val items = if (screen == Screen.BROWSER) allItems else recentAdapter.currentList
         return items.filter { selectedPaths.contains(selectionKey(it.file)) }
     }
@@ -696,7 +758,9 @@ class MainActivity : AppCompatActivity() {
         return try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
     }
 
-    private fun canModify(file: File): Boolean = !primaryRoot.readOnly && primaryRoot.contains(file)
+    internal fun canModify(file: File): Boolean = primaryRoot.contains(file) && hasWriteAccess()
+
+    internal fun isInPrimaryStorage(file: File): Boolean = primaryRoot.contains(file)
 
     private fun renderToolbar() {
         fileAdapter.refreshSelection()
@@ -711,15 +775,10 @@ class MainActivity : AppCompatActivity() {
             binding.toolbar.menu.setGroupVisible(R.id.sort_group, false)
             binding.toolbar.menu.findItem(R.id.action_storage_settings)?.isVisible = false
             binding.browserScreen.newFolderButton.isVisible = false
-            val selected = selectedItems()
-            binding.toolbar.menu.findItem(R.id.action_selection_share)?.isVisible =
-                selected.isNotEmpty() && selected.none { it.isDirectory }
-            binding.toolbar.menu.findItem(R.id.action_selection_copy)?.isVisible = selected.isNotEmpty()
-            val canModify = selected.isNotEmpty() && selected.all { canModify(it.file) }
-            binding.toolbar.menu.findItem(R.id.action_selection_move)?.isVisible = canModify
-            binding.toolbar.menu.findItem(R.id.action_selection_delete)?.isVisible = canModify
+            renderSelectionBar(selectedItems())
             return
         }
+        renderSelectionBar(emptyList())
         binding.toolbar.menu.setGroupVisible(R.id.selection_group, false)
         if (screen == Screen.HOME) {
             binding.toolbar.title = getString(R.string.app_name)
@@ -743,11 +802,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderSelectionBar(selected: List<FileItem>) {
+        val visible = selectionMode && selected.isNotEmpty()
+        binding.selectionBar.root.isVisible = visible
+        if (!visible) return
+        val canModifyAll = selected.all { canModify(it.file) }
+        binding.selectionBar.barShare.isEnabled = selected.none { it.isDirectory }
+        binding.selectionBar.barMove.isEnabled = canModifyAll
+        binding.selectionBar.barDelete.isEnabled = canModifyAll
+    }
+
     private fun openItem(item: FileItem) {
         if (item.isDirectory) openDirectory(item.file) else openFile(item.file)
     }
 
-    private fun openFile(file: File, forceChooser: Boolean = false) {
+    internal fun openFile(file: File, forceChooser: Boolean = false) {
         val uri = try {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         } catch (_: IllegalArgumentException) {
@@ -838,7 +907,7 @@ class MainActivity : AppCompatActivity() {
         popup.show()
     }
 
-    private fun beginTransfer(items: List<FileItem>, move: Boolean) {
+    internal fun beginTransfer(items: List<FileItem>, move: Boolean) {
         if (items.isEmpty()) return
         if (move && items.any { !canModify(it.file) }) {
             toast(R.string.operation_invalid)
@@ -876,7 +945,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun deleteItems(items: List<FileItem>) {
-        if (items.isEmpty() || items.any { !canModify(it.file) }) return
+        if (items.isEmpty()) return
+        if (items.any { !canModify(it.file) }) {
+            toast(R.string.delete_not_permitted)
+            return
+        }
         val progress = ProgressBar(this)
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.working_on_files)
@@ -889,7 +962,12 @@ class MainActivity : AppCompatActivity() {
             scanChangedFiles(result)
             clearSelection()
             refreshAfterChange()
-            showOperationResult(FileOperations.Operation.DELETE, result)
+            val failed = result.items.filterNot { it.isSuccess }
+            if (failed.isNotEmpty() && failed.all { it.error == FileOperations.Error.PERMISSION_DENIED }) {
+                requestDeleteConsent(failed.map { it.source })
+            } else {
+                showOperationResult(FileOperations.Operation.DELETE, result)
+            }
         }
     }
 
@@ -921,7 +999,7 @@ class MainActivity : AppCompatActivity() {
                     append("\n\n")
                     append(getString(R.string.operation_partial, result.successCount, otherFailures.size))
                     append("\n")
-                    append(otherFailures.joinToString("\n") { "• ${it.source.name}" })
+                    append(otherFailures.joinToString("\n") { "• ${it.source.name} — ${failureReason(it)}" })
                 }
             }
             MaterialAlertDialogBuilder(this)
@@ -932,7 +1010,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val failedNames = result.items.filterNot { it.isSuccess }
-            .joinToString("\n") { "• ${it.source.name}" }
+            .joinToString("\n") { "• ${it.source.name} — ${failureReason(it)}" }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.operation_failed)
             .setMessage(
@@ -941,6 +1019,19 @@ class MainActivity : AppCompatActivity() {
             )
             .setPositiveButton(android.R.string.ok, null)
             .show()
+    }
+
+    private fun failureReason(item: FileOperations.ItemResult): String {
+        item.message?.let { return it }
+        return when (item.error) {
+            FileOperations.Error.PERMISSION_DENIED -> getString(R.string.error_permission_denied)
+            FileOperations.Error.MISSING_SOURCE -> getString(R.string.error_missing_source)
+            FileOperations.Error.UNREADABLE_SOURCE -> getString(R.string.error_unreadable_source)
+            FileOperations.Error.SOURCE_OUTSIDE_PRIMARY,
+            FileOperations.Error.DESTINATION_OUTSIDE_PRIMARY,
+            -> getString(R.string.error_outside_storage)
+            else -> item.error?.name ?: getString(R.string.operation_failed)
+        }
     }
 
     private fun showNewFolderDialog() {
@@ -975,7 +1066,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showRenameDialog(item: FileItem) {
+    internal fun showRenameDialog(item: FileItem) {
         if (!canModify(item.file)) return
         val input = DialogInputBinding.inflate(layoutInflater)
         input.inputLayout.setHint(R.string.new_name)
@@ -1010,7 +1101,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(item: FileItem) {
-        if (!canModify(item.file)) return
+        if (!canModify(item.file)) {
+            toast(R.string.delete_not_permitted)
+            return
+        }
         val message = getString(
             if (item.isDirectory) R.string.delete_folder_message else R.string.delete_file_message,
             item.name,
@@ -1024,7 +1118,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(items: List<FileItem>) {
-        if (items.isEmpty() || items.any { !canModify(it.file) }) return
+        if (items.isEmpty()) return
+        if (items.any { !canModify(it.file) }) {
+            toast(R.string.delete_not_permitted)
+            return
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.delete)
             .setMessage(getString(R.string.delete_selected_message, items.size))
@@ -1035,7 +1133,189 @@ class MainActivity : AppCompatActivity() {
 
     private fun deleteItem(item: FileItem) = deleteItems(listOf(item))
 
-    private fun showDetails(item: FileItem) {
+    // region Swipe-to-delete with a deferred, undoable commit
+
+    private fun enqueueDeferredDelete(item: FileItem) {
+        val key = selectionKey(item.file)
+        if (pendingDeletes.containsKey(key)) return
+        val job = lifecycleScope.launch {
+            delay(UNDO_WINDOW_MS)
+            commitPendingDelete(key)
+        }
+        pendingDeletes[key] = PendingDelete(item, job)
+        if (screen == Screen.BROWSER) {
+            allItems = allItems.filterNot { selectionKey(it.file) == key }
+            applyFilter()
+        } else {
+            val remaining = recentAdapter.currentList.filterNot { selectionKey(it.file) == key }
+            recentAdapter.submitList(remaining)
+            binding.homeScreen.recentEmpty.isVisible = remaining.isEmpty()
+            binding.homeScreen.recentList.isVisible = remaining.isNotEmpty()
+        }
+        updateUndoSnackbar()
+    }
+
+    private suspend fun commitPendingDelete(key: String) {
+        val entry = pendingDeletes[key] ?: return
+        entry.committing = true
+        // Per-item delete: prepare() rejects a whole batch when any single source is invalid.
+        val result = withContext(Dispatchers.IO + NonCancellable) {
+            fileOperations.delete(listOf(entry.item.file))
+        }
+        pendingDeletes.remove(key)
+        scanChangedFiles(result)
+        refreshAfterChange()
+        val failed = result.items.singleOrNull()
+        if (failed != null && !failed.isSuccess) {
+            if (failed.error == FileOperations.Error.PERMISSION_DENIED) {
+                requestDeleteConsent(listOf(entry.item.file))
+            } else {
+                showOperationResult(FileOperations.Operation.DELETE, result)
+            }
+        }
+        updateUndoSnackbar()
+    }
+
+    private fun undoPendingDeletes() {
+        val restored = pendingDeletes.filterValues { !it.committing }
+        restored.forEach { (key, entry) ->
+            entry.job.cancel()
+            pendingDeletes.remove(key)
+        }
+        undoSnackbar?.dismiss()
+        undoSnackbar = null
+        if (restored.isNotEmpty()) {
+            // The files never left the disk; reloading brings their rows back.
+            refreshAfterChange()
+            toast(getString(R.string.deletes_restored, restored.size))
+        }
+        updateUndoSnackbar()
+    }
+
+    private fun updateUndoSnackbar() {
+        val undoable = pendingDeletes.filterValues { !it.committing }
+        undoSnackbar?.dismiss()
+        undoSnackbar = null
+        if (undoable.isEmpty()) return
+        val text = if (undoable.size == 1) {
+            getString(R.string.delete_pending_single, undoable.values.first().item.name)
+        } else {
+            resources.getQuantityString(R.plurals.delete_pending_plural, undoable.size, undoable.size)
+        }
+        val snackbar = Snackbar.make(binding.root, text, UNDO_WINDOW_MS.toInt() + 500)
+            .setAction(R.string.undo) { undoPendingDeletes() }
+        if (screen == Screen.BROWSER && binding.browserScreen.newFolderButton.isVisible) {
+            snackbar.setAnchorView(binding.browserScreen.newFolderButton)
+        }
+        snackbar.show()
+        undoSnackbar = snackbar
+    }
+
+    // endregion
+
+    // region Scoped-storage delete consent fallback
+
+    private fun requestDeleteConsent(files: List<File>) {
+        if (files.isEmpty()) return
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                val uris = DeleteFallback.mediaStoreUris(contentResolver, files)
+                val sender = if (uris.isEmpty()) {
+                    null
+                } else {
+                    DeleteFallback.deleteRequestSender(contentResolver, uris)
+                }
+                if (sender == null) {
+                    toast(R.string.delete_consent_unavailable)
+                    return
+                }
+                pendingConsentFiles = files
+                deleteConsentLauncher.launch(IntentSenderRequest.Builder(sender).build())
+            }
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.Q -> requestDeleteConsentQ(files)
+            else -> toast(R.string.delete_not_permitted)
+        }
+    }
+
+    private fun requestDeleteConsentQ(files: List<File>) {
+        lifecycleScope.launch {
+            var consentSender: IntentSender? = null
+            val needsConsent = mutableListOf<File>()
+            val deleted = mutableListOf<File>()
+            withContext(Dispatchers.IO) {
+                files.forEach { file ->
+                    val uri = DeleteFallback.mediaStoreUri(contentResolver, file)
+                    if (uri == null) {
+                        needsConsent += file
+                        return@forEach
+                    }
+                    when (val outcome = DeleteFallback.deleteViaMediaStoreQ(contentResolver, uri)) {
+                        is DeleteFallback.QDeleteResult.Deleted -> deleted += file
+                        is DeleteFallback.QDeleteResult.Consent -> {
+                            if (consentSender == null) consentSender = outcome.sender
+                            needsConsent += file
+                        }
+                        is DeleteFallback.QDeleteResult.Failed -> needsConsent += file
+                    }
+                }
+            }
+            if (deleted.isNotEmpty()) {
+                scanChangedFiles(
+                    FileOperations.BatchResult(
+                        deleted.map {
+                            FileOperations.ItemResult(
+                                FileOperations.Operation.DELETE,
+                                it,
+                                null,
+                                FileOperations.Status.DELETED,
+                            )
+                        },
+                    ),
+                )
+                refreshAfterChange()
+            }
+            val sender = consentSender
+            if (needsConsent.isEmpty()) {
+                if (deleted.isEmpty()) toast(R.string.delete_consent_unavailable)
+                return@launch
+            }
+            if (sender == null) {
+                toast(R.string.delete_consent_unavailable)
+                return@launch
+            }
+            pendingConsentFiles = needsConsent
+            deleteConsentLauncher.launch(IntentSenderRequest.Builder(sender).build())
+        }
+    }
+
+    private fun finishConsentedDeletes(files: List<File>) {
+        lifecycleScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                files.map { file ->
+                    if (!file.exists()) {
+                        // The system consent dialog already removed it.
+                        FileOperations.ItemResult(
+                            FileOperations.Operation.DELETE,
+                            file,
+                            null,
+                            FileOperations.Status.DELETED,
+                        )
+                    } else {
+                        // Consent grants a one-time raw-delete allowance for this file.
+                        fileOperations.delete(file)
+                    }
+                }
+            }
+            val batch = FileOperations.BatchResult(results)
+            scanChangedFiles(batch)
+            refreshAfterChange()
+            showOperationResult(FileOperations.Operation.DELETE, batch)
+        }
+    }
+
+    // endregion
+
+    internal fun showDetails(item: FileItem) {
         val type = if (item.isDirectory) {
             getString(R.string.folder)
         } else {
@@ -1079,5 +1359,6 @@ class MainActivity : AppCompatActivity() {
         const val STATE_PENDING_IMPORT = "pending_import_uri"
         const val STATE_TRANSFER_PATHS = "pending_transfer_paths"
         const val STATE_TRANSFER_MOVE = "pending_transfer_move"
+        const val UNDO_WINDOW_MS = 3_000L
     }
 }

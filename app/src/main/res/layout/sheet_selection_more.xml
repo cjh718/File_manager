@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="16dp"
+    android:paddingBottom="12dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="8dp"
+        android:text="@string/more_actions"
+        android:textAppearance="@style/TextAppearance.Folio.SectionTitle" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_copy"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/copy"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_select_all"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/select_all"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_rename"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/rename"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_details"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/details"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_open_with"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/open_with"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sheet_quick_access"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:text="@string/add_to_quick_access"
+        android:textAlignment="textStart"
+        android:textColor="@color/text" />
+
+</LinearLayout>
