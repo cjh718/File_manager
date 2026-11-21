@@ -61,6 +61,6 @@ Install it with `adb install app-debug.apk`, or copy it to a phone and open it. 
 
 ## Notes
 
-The Recent list comes from Android’s MediaStore with no item limit; it shows five rows at a time and scrolls for more. Quick-access folders depend on the manufacturer’s folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
+The Recent list comes from Android’s MediaStore and loads ten files at a time, fetching the next page as you scroll; it shows five rows at a time and scrolls for more. Quick-access folders depend on the manufacturer’s folder names. Search intentionally covers the open folder rather than recursively scanning the entire device.
 
 The bundled Roboto font is licensed under the SIL Open Font License; its license is included in `app/src/main/assets/OFL-Roboto.txt`.

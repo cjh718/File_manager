@@ -33,6 +33,7 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.folio.files.databinding.ActivityMainBinding
 import com.folio.files.databinding.DialogInputBinding
 import com.folio.files.databinding.ViewCategoryBinding
@@ -82,10 +83,9 @@ private var selectionMode = false
 private val selectedPaths = linkedSetOf<String>()
 private var pendingTransfer: PendingTransfer? = null
 private data class RecentPage(
-val items: List<FileItem>,
-val nextOffset: Int,
-val hasMore: Boolean,
-
+    val items: List<FileItem>,
+    val nextOffset: Int,
+    val hasMore: Boolean,
 )
 
 private val recentPageSize = 10
@@ -241,6 +241,15 @@ private fun setupLists() {
     binding.homeScreen.recentList.apply {
         layoutManager = LinearLayoutManager(this@MainActivity)
         adapter = recentAdapter
+        addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                if (lm.findLastVisibleItemPosition() >= recentAdapter.itemCount - 3) {
+                    loadRecentFiles(reset = false)
+                }
+            }
+        })
     }
 
     val canSwipe = { item: FileItem -> !selectionMode && canModify(item.file) }
@@ -610,23 +619,40 @@ private fun updateStorageOverview() {
     }
 }
 
-private fun loadRecentFiles() {
-    recentJob?.cancel()
-    binding.homeScreen.recentProgress.isVisible = true
+private fun loadRecentFiles(reset: Boolean = true) {
+    if (reset) {
+        recentJob?.cancel()
+        recentLoading = false
+        recentOffset = 0
+        recentHasMore = true
+        binding.homeScreen.recentProgress.isVisible = true
+    }
+    if (recentLoading || !recentHasMore) return
+    recentLoading = true
+    val offset = recentOffset
     recentJob = lifecycleScope.launch {
         val pending = pendingDeletes.keys.toSet()
-        val recent = withContext(Dispatchers.IO) {
-            queryRecentFiles().filterNot { pending.contains(selectionKey(it.file)) }
+        val page = withContext(Dispatchers.IO) {
+            val raw = queryRecentPage(offset)
+            RecentPage(
+                raw.items.filterNot { pending.contains(selectionKey(it.file)) },
+                raw.nextOffset,
+                raw.hasMore,
+            )
         }
+        recentLoading = false
+        recentOffset = page.nextOffset
+        recentHasMore = page.hasMore
         if (screen != Screen.HOME) return@launch
         binding.homeScreen.recentProgress.isVisible = false
-        recentAdapter.submitList(recent)
-        binding.homeScreen.recentEmpty.isVisible = recent.isEmpty()
-        binding.homeScreen.recentList.isVisible = recent.isNotEmpty()
+        val merged = if (reset) page.items else recentAdapter.currentList + page.items
+        recentAdapter.submitList(merged)
+        binding.homeScreen.recentEmpty.isVisible = merged.isEmpty()
+        binding.homeScreen.recentList.isVisible = merged.isNotEmpty()
     }
 }
 
-private fun queryRecentFiles(): List<FileItem> {
+private fun queryRecentPage(offset: Int): RecentPage {
     val projection = arrayOf(MediaStore.Files.FileColumns.DATA)
     val rootPrefix = try {
         storageRoot.canonicalPath
@@ -642,14 +668,17 @@ private fun queryRecentFiles(): List<FileItem> {
             ContentResolver.QUERY_ARG_SORT_DIRECTION,
             ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
         )
-        // Skip other volumes in SQL; no row limit — the list scrolls to show everything.
+        // Skip other volumes in SQL; page through the rest as the list scrolls.
         putString(
             ContentResolver.QUERY_ARG_SQL_SELECTION,
             "${MediaStore.Files.FileColumns.DATA} LIKE ?",
         )
         putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("$rootPrefix/%"))
+        putInt(ContentResolver.QUERY_ARG_LIMIT, recentPageSize)
+        putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
     }
     val result = mutableListOf<FileItem>()
+    var rawCount = 0
     try {
         contentResolver.query(
             MediaStore.Files.getContentUri("external"),
@@ -659,6 +688,7 @@ private fun queryRecentFiles(): List<FileItem> {
         )?.use { cursor ->
             val pathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
             while (cursor.moveToNext()) {
+                rawCount++
                 if (pathColumn < 0 || cursor.isNull(pathColumn)) continue
                 val file = File(cursor.getString(pathColumn))
                 if (file.isFile && file.canRead() && primaryRoot.contains(file)) result += FileItem(file)
@@ -667,7 +697,7 @@ private fun queryRecentFiles(): List<FileItem> {
     } catch (_: RuntimeException) {
         // Some devices restrict MediaStore paths even with broad file access.
     }
-    return result
+    return RecentPage(result, offset + rawCount, rawCount == recentPageSize)
 }
 
 private fun loadFiles() {
