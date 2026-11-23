@@ -65,6 +65,14 @@
     <string name="delete_folder_message">Delete “%1$s” and everything inside it? This cannot be undone.</string>
     <string name="folder">Folder</string>
     <string name="details_message">Type: %1$s\n\nSize: %2$s\n\nModified: %3$s\n\nLocation: %4$s</string>
+    <string name="image_details_message">Resolution: %1$s\n\nType: %2$s\n\nSize: %3$s\n\nLocation: %4$s</string>
+    <string name="edit">Edit</string>
+    <string name="unknown">Unknown</string>
+    <string name="set_wallpaper">Set as wallpaper</string>
+    <string name="set_wallpaper_confirmation">Set this image as your wallpaper?</string>
+    <string name="wallpaper_set">Wallpaper set.</string>
+    <string name="image_details">Image details</string>
+    <string name="image_preview">Image preview</string>
     <string name="path_format">Internal storage / %1$s</string>
     <string name="select_all">Select all</string>
     <string name="copy">Copy</string>

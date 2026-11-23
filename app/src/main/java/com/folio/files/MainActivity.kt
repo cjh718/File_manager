@@ -206,7 +206,11 @@ override fun onResume() {
     if (::binding.isInitialized && binding.permissionScreen.root.isVisible && hasStorageAccess()) {
         continueWithStorageAccess()
     } else if (::binding.isInitialized && binding.appContainer.isVisible) {
-        if (binding.homeScreen.root.isVisible) buildQuickAccess()
+        if (binding.homeScreen.root.isVisible) {
+            buildQuickAccess()
+            // Refresh Recent Files when returning from the image viewer or another app.
+            loadRecentFiles(reset = true)
+        }
         // Permissions may have changed in system settings while we were backgrounded.
         refreshStorageRoots()
     }
@@ -691,13 +695,48 @@ private fun queryRecentPage(offset: Int): RecentPage {
                 rawCount++
                 if (pathColumn < 0 || cursor.isNull(pathColumn)) continue
                 val file = File(cursor.getString(pathColumn))
-                if (file.isFile && file.canRead() && primaryRoot.contains(file)) result += FileItem(file)
+                if (
+                    file.isFile &&
+                    file.canRead() &&
+                    primaryRoot.contains(file) &&
+                    !isExcludedFromRecent(file) &&
+                    (!FileUtils.isImageFile(file) || FileUtils.isValidImageFile(file))
+                ) {
+                    result += FileItem(file)
+                }
             }
         }
     } catch (_: RuntimeException) {
         // Some devices restrict MediaStore paths even with broad file access.
     }
     return RecentPage(result, offset + rawCount, rawCount == recentPageSize)
+}
+
+/** Excludes hidden folders and common cache/temp locations without deleting anything. */
+private fun isExcludedFromRecent(file: File): Boolean {
+    val rootPath = try {
+        storageRoot.canonicalPath
+    } catch (_: Exception) {
+        storageRoot.absolutePath
+    }
+    val filePath = try {
+        file.canonicalPath
+    } catch (_: Exception) {
+        file.absolutePath
+    }
+    if (!filePath.startsWith(rootPath + File.separator)) return true
+
+    val relativeParts = filePath
+        .removePrefix(rootPath + File.separator)
+        .split(File.separatorChar)
+
+    val cacheDirectoryNames = setOf(
+        "cache", "caches", "tmp", "temp", "thumbnails"
+    )
+
+    return relativeParts.any { part ->
+        part.startsWith(".") || part.lowercase(Locale.ROOT) in cacheDirectoryNames
+    }
 }
 
 private fun loadFiles() {
@@ -858,6 +897,20 @@ private fun openItem(item: FileItem) {
 }
 
 internal fun openFile(file: File, forceChooser: Boolean = false) {
+    if (FileUtils.isValidImageFile(file)) {
+        if (forceChooser) {
+            // Preserve the existing Open with action for users who choose another image app.
+        } else {
+            startActivity(
+                Intent(this, ImageViewerActivity::class.java).putExtra(
+                    ImageViewerActivity.EXTRA_FILE_PATH,
+                    file.absolutePath,
+                ),
+            )
+            return
+        }
+    }
+
     val uri = try {
         FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
     } catch (_: IllegalArgumentException) {
