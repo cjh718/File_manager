@@ -657,59 +657,107 @@ private fun loadRecentFiles(reset: Boolean = true) {
 }
 
 private fun queryRecentPage(offset: Int): RecentPage {
-    val projection = arrayOf(MediaStore.Files.FileColumns.DATA)
+    val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        arrayOf(
+            MediaStore.Files.FileColumns.DATA,
+            MediaStore.MediaColumns.IS_TRASHED,
+        )
+    } else {
+        arrayOf(MediaStore.Files.FileColumns.DATA)
+    }
     val rootPrefix = try {
         storageRoot.canonicalPath
     } catch (_: Exception) {
         storageRoot.absolutePath
     }
-    val args = Bundle().apply {
-        putStringArray(
-            ContentResolver.QUERY_ARG_SORT_COLUMNS,
-            arrayOf(MediaStore.Files.FileColumns.DATE_MODIFIED),
-        )
-        putInt(
-            ContentResolver.QUERY_ARG_SORT_DIRECTION,
-            ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
-        )
-        // Skip other volumes in SQL; page through the rest as the list scrolls.
-        putString(
-            ContentResolver.QUERY_ARG_SQL_SELECTION,
-            "${MediaStore.Files.FileColumns.DATA} LIKE ?",
-        )
-        putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("$rootPrefix/%"))
-        putInt(ContentResolver.QUERY_ARG_LIMIT, recentPageSize)
-        putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
-    }
+
     val result = mutableListOf<FileItem>()
-    var rawCount = 0
+    var nextOffset = offset
+    var lastBatchRead = 0
+    val batchSize = 50
+
+    // Keep scanning MediaStore pages until we collect enough visible files.
+    // Otherwise, a page containing only hidden/invalid files can leave
+    // Recent Files empty with no items to scroll and load the next page.
     try {
-        contentResolver.query(
-            MediaStore.Files.getContentUri("external"),
-            projection,
-            args,
-            null,
-        )?.use { cursor ->
-            val pathColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-            while (cursor.moveToNext()) {
-                rawCount++
-                if (pathColumn < 0 || cursor.isNull(pathColumn)) continue
-                val file = File(cursor.getString(pathColumn))
-                if (
-                    file.isFile &&
-                    file.canRead() &&
-                    primaryRoot.contains(file) &&
-                    !isExcludedFromRecent(file) &&
-                    (!FileUtils.isImageFile(file) || FileUtils.isValidImageFile(file))
-                ) {
-                    result += FileItem(file)
+        while (result.size < recentPageSize) {
+            val selectionParts = mutableListOf(
+                "${MediaStore.Files.FileColumns.DATA} LIKE ?"
+            )
+            val selectionArgs = mutableListOf("$rootPrefix/%")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                selectionParts += "${MediaStore.MediaColumns.IS_TRASHED} = 0"
+            }
+
+            val args = Bundle().apply {
+                putStringArray(
+                    ContentResolver.QUERY_ARG_SORT_COLUMNS,
+                    arrayOf(MediaStore.Files.FileColumns.DATE_MODIFIED),
+                )
+                putInt(
+                    ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                    ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
+                )
+                putString(
+                    ContentResolver.QUERY_ARG_SQL_SELECTION,
+                    selectionParts.joinToString(" AND "),
+                )
+                putStringArray(
+                    ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                    selectionArgs.toTypedArray(),
+                )
+                putInt(ContentResolver.QUERY_ARG_LIMIT, batchSize)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, nextOffset)
+            }
+
+            var batchRead = 0
+            val cursor = contentResolver.query(
+                MediaStore.Files.getContentUri("external"),
+                projection,
+                args,
+                null,
+            ) ?: break
+
+            cursor.use {
+                val pathColumn = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+                val trashedColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    it.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+                } else {
+                    -1
+                }
+                while (it.moveToNext()) {
+                    batchRead++
+                    if (
+                        pathColumn < 0 ||
+                        it.isNull(pathColumn) ||
+                        (trashedColumn >= 0 && it.getInt(trashedColumn) != 0)
+                    ) continue
+
+                    val file = File(it.getString(pathColumn))
+                    if (
+                        file.isFile &&
+                        file.canRead() &&
+                        primaryRoot.contains(file) &&
+                        !isExcludedFromRecent(file) &&
+                        (!FileUtils.isImageFile(file) || FileUtils.isValidImageFile(file))
+                    ) {
+                        result += FileItem(file)
+                        if (result.size >= recentPageSize) break
+                    }
                 }
             }
+
+            nextOffset += batchRead
+            lastBatchRead = batchRead
+
+            if (batchRead == 0 || batchRead < batchSize) break
         }
     } catch (_: RuntimeException) {
         // Some devices restrict MediaStore paths even with broad file access.
     }
-    return RecentPage(result, offset + rawCount, rawCount == recentPageSize)
+
+    val hasMore = result.size >= recentPageSize || lastBatchRead == batchSize
+    return RecentPage(result, nextOffset, hasMore)
 }
 
 /** Excludes hidden folders and common cache/temp locations without deleting anything. */
@@ -731,7 +779,19 @@ private fun isExcludedFromRecent(file: File): Boolean {
         .split(File.separatorChar)
 
     val cacheDirectoryNames = setOf(
-        "cache", "caches", "tmp", "temp", "thumbnails"
+        "cache",
+        "caches",
+        "tmp",
+        "temp",
+        "thumbnails",
+        "trash",
+        ".trash",
+        ".trashed",
+        "recycle",
+        "recycle bin",
+        "recyclebin",
+        "recently deleted",
+        "recently_deleted",
     )
 
     return relativeParts.any { part ->
