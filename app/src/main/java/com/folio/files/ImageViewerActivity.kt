@@ -24,6 +24,7 @@ import com.folio.files.databinding.ActivityImageViewerBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.File
 import java.io.IOException
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +34,9 @@ class ImageViewerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityImageViewerBinding
     private var imageFile: File? = null
     private var displayedBitmap: Bitmap? = null
+    private var siblingImages: List<File> = emptyList()
+    private var siblingImageIndex = -1
+    private var isLoadingImage = false
 
     private val storageRoot: File
         get() = android.os.Environment.getExternalStorageDirectory().canonicalFile
@@ -80,6 +84,8 @@ class ImageViewerActivity : AppCompatActivity() {
         binding.actionEdit.setOnClickListener { editImage() }
         binding.actionDelete.setOnClickListener { confirmDelete() }
         binding.actionMore.setOnClickListener { showMoreActions(it) }
+        binding.imageView.onSwipeLeft = { showAdjacentImage(1) }
+        binding.imageView.onSwipeRight = { showAdjacentImage(-1) }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -87,7 +93,7 @@ class ImageViewerActivity : AppCompatActivity() {
             }
         })
 
-        loadImage(file)
+        loadImage(file, initializeGallery = true)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -103,32 +109,69 @@ class ImageViewerActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    private fun loadImage(file: File) {
+    private fun loadImage(file: File, initializeGallery: Boolean = false) {
+        isLoadingImage = true
         lifecycleScope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                if (!file.isFile || !file.canRead()) {
+            val loaded: Pair<List<File>, Bitmap?> = withContext(Dispatchers.IO) {
+                val images = if (initializeGallery) {
+                    file.parentFile
+                        ?.listFiles()
+                        ?.filter { FileUtils.isImageFile(it) && it.canRead() }
+                        ?.sortedWith(
+                            compareBy<File> { it.name.lowercase(Locale.ROOT) }
+                                .thenBy { it.name },
+                        )
+                        .orEmpty()
+                        .let { siblings ->
+                            if (file in siblings) siblings else (siblings + file).sortedWith(
+                                compareBy<File> { it.name.lowercase(Locale.ROOT) }
+                                    .thenBy { it.name },
+                            )
+                        }
+                } else {
+                    siblingImages
+                }
+                val bitmap = if (!file.isFile || !file.canRead()) {
                     null
                 } else {
                     BitmapFactory.decodeFile(file.absolutePath)
                 }
+                images to bitmap
             }
+            val (images, bitmap) = loaded
 
             if (isFinishing || isDestroyed) {
                 bitmap?.recycle()
                 return@launch
             }
 
+            isLoadingImage = false
             if (bitmap == null) {
                 Toast.makeText(this@ImageViewerActivity, R.string.operation_failed, Toast.LENGTH_SHORT)
                     .show()
-                finish()
+                if (initializeGallery) finish()
                 return@launch
             }
 
+            if (initializeGallery) {
+                siblingImages = images
+            }
+            siblingImageIndex = images.indexOf(file)
+            imageFile = file
+            displayedBitmap?.let { previous ->
+                if (!previous.isRecycled) previous.recycle()
+            }
             displayedBitmap = bitmap
             binding.imageView.setImageBitmap(bitmap)
             binding.toolbar.title = file.name
         }
+    }
+
+    private fun showAdjacentImage(offset: Int) {
+        if (isLoadingImage || siblingImages.isEmpty()) return
+        val nextIndex = siblingImageIndex + offset
+        if (nextIndex !in siblingImages.indices) return
+        loadImage(siblingImages[nextIndex])
     }
 
     private fun showMoreActions(anchor: android.view.View) {

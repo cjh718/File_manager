@@ -27,6 +27,12 @@ class ZoomableImageView @JvmOverloads constructor(
     private val maximumScale = 5f
 
     private var isDragging = false
+    private var isSwipeCandidate = false
+
+    var onSwipeLeft: (() -> Unit)? = null
+    var onSwipeRight: (() -> Unit)? = null
+
+    private val swipeThreshold = 72f * resources.displayMetrics.density
 
     private val scaleDetector = ScaleGestureDetector(
         context,
@@ -106,10 +112,12 @@ class ZoomableImageView @JvmOverloads constructor(
                 lastPoint.set(event.x, event.y)
                 startPoint.set(event.x, event.y)
                 isDragging = true
+                isSwipeCandidate = true
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 isDragging = false
+                isSwipeCandidate = false
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -127,10 +135,24 @@ class ZoomableImageView @JvmOverloads constructor(
                 lastPoint.set(event.x, event.y)
             }
 
-            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_UP -> {
+                isDragging = false
+                if (isSwipeCandidate && currentScale == minimumScale) {
+                    val dx = event.x - startPoint.x
+                    val dy = event.y - startPoint.y
+                    if (kotlin.math.abs(dx) >= swipeThreshold &&
+                        kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f
+                    ) {
+                        if (dx < 0f) onSwipeLeft?.invoke() else onSwipeRight?.invoke()
+                    }
+                }
+                isSwipeCandidate = false
+                performClick()
+            }
+
             MotionEvent.ACTION_CANCEL -> {
                 isDragging = false
-                performClick()
+                isSwipeCandidate = false
             }
         }
 
